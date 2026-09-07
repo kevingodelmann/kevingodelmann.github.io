@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Nightfall Survivors</title>
-<meta name="description" content="A browser survivors-like: auto-attacking weapons, endless swarms, 20 minutes to live.">
+<title>Overtime</title>
+<meta name="description" content="A survivors-like set in an open-plan office. Auto-firing office supplies, an endless swarm of coworkers, and eight hours to get through.">
 <style>
   :root{
     --bg:#0a0712; --panel:#15102a; --panel2:#1d1638;
@@ -32,6 +32,7 @@
   #stats{min-width:110px}
   #timer{font-size:26px;font-weight:700;letter-spacing:1px;text-shadow:0 2px 6px #000;line-height:1}
   #stats{text-align:right;color:var(--dim);font-size:12px;line-height:1.5}
+  #clock{font-size:11px;color:#8b81b4;letter-spacing:1px;margin-top:2px}
   #stats b{color:var(--gold)}
   #lvltag{display:inline-block;background:var(--panel2);border:1px solid var(--line);
     border-radius:6px;padding:2px 7px;font-size:11px;color:var(--xp);margin-bottom:4px}
@@ -106,7 +107,7 @@
         <div id="lvltag">LV 1</div>
         <div class="bar" id="hpbar"><i></i><b></b></div>
       </div>
-      <div style="text-align:center"><div id="timer">00:00</div></div>
+      <div style="text-align:center"><div id="timer">00:00</div><div id="clock">9:00 AM</div></div>
       <div id="stats"></div>
     </div>
     <div id="loadout"></div>
@@ -116,24 +117,25 @@
   <!-- Title -->
   <div class="screen on" id="s-title">
     <div class="box">
-      <h1>NIGHTFALL SURVIVORS</h1>
+      <h1>OVERTIME</h1>
       <p class="sub">
-        The horde never stops. Your weapons fire themselves.<br>
-        Move, collect gems, and pick your upgrades wisely.<br><br>
+        It is 9:00 AM. The floor is filling up.<br>
+        Your office supplies fight for you &mdash; you just keep moving,<br>
+        collect the sticky notes, and take the promotions.<br><br>
         <kbd>WASD</kbd> / <kbd>&#8592;&#8593;&#8594;&#8595;</kbd> move &nbsp;&middot;&nbsp;
-        <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick upgrade &nbsp;&middot;&nbsp; <kbd>Esc</kbd> pause<br>
+        <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick perk &nbsp;&middot;&nbsp; <kbd>Esc</kbd> break<br>
         <span style="color:#6b6193">On mobile: drag anywhere to move.</span>
       </p>
       <div id="best" class="runstats"></div>
-      <button class="big" id="playbtn">SURVIVE 20:00</button>
+      <button class="big" id="playbtn">CLOCK IN</button>
     </div>
   </div>
 
   <!-- Level up -->
   <div class="screen" id="s-level">
     <div class="box">
-      <h1 style="font-size:clamp(20px,5vw,30px)" id="lvltitle">LEVEL UP</h1>
-      <p class="sub" style="margin-bottom:10px">Choose your power</p>
+      <h1 style="font-size:clamp(20px,5vw,30px)" id="lvltitle">PROMOTION</h1>
+      <p class="sub" style="margin-bottom:10px">Choose your perk</p>
       <div id="cards"></div>
     </div>
   </div>
@@ -141,20 +143,20 @@
   <!-- Pause -->
   <div class="screen" id="s-pause">
     <div class="box">
-      <h1 style="font-size:clamp(22px,5vw,34px)">PAUSED</h1>
+      <h1 style="font-size:clamp(22px,5vw,34px)">COFFEE BREAK</h1>
       <div id="pausestats" class="runstats"></div>
-      <button class="big" id="resumebtn">RESUME</button><br>
-      <button class="ghost" id="quitbtn">Abandon run</button>
+      <button class="big" id="resumebtn">BACK TO WORK</button><br>
+      <button class="ghost" id="quitbtn">Resign</button>
     </div>
   </div>
 
   <!-- Game over / victory -->
   <div class="screen" id="s-over">
     <div class="box">
-      <h1 id="overtitle">YOU DIED</h1>
-      <p class="sub" id="oversub">The night claims another.</p>
+      <h1 id="overtitle">YOU'RE FIRED</h1>
+      <p class="sub" id="oversub">HR will be in touch.</p>
       <div id="overstats" class="runstats"></div>
-      <button class="big" id="againbtn">TRY AGAIN</button>
+      <button class="big" id="againbtn">CLOCK BACK IN</button>
     </div>
   </div>
 </div>
@@ -178,6 +180,14 @@ const dist2 = (ax, ay, bx, by) => { const dx = bx - ax, dy = by - ay; return dx 
 const $ = id => document.getElementById(id);
 function shuffle(a){ for (let i = a.length - 1; i > 0; i--){ const j = (Math.random()*(i+1))|0; [a[i],a[j]] = [a[j],a[i]]; } return a; }
 function fmtTime(s){ const m = (s/60)|0, r = (s%60)|0; return String(m).padStart(2,'0') + ':' + String(r).padStart(2,'0'); }
+/* The 20-minute run maps onto a 9-to-5 workday; past 17:00 you are on overtime. */
+function officeClock(t){
+  const mins = 9 * 60 + (t / 1200) * 480;
+  const h24 = Math.floor(mins / 60), m = Math.floor(mins % 60);
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  const h = h24 % 12 === 0 ? 12 : h24 % 12;
+  return h + ':' + String(m).padStart(2, '0') + ' ' + ampm + (mins >= 1020 ? ' \u00b7 OVERTIME' : '');
+}
 
 /* Uniform-grid spatial hash — keeps swarm separation and hit tests cheap. */
 class Grid {
@@ -212,7 +222,8 @@ function resize(){
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
-addEventListener('resize', resize); resize();
+addEventListener('resize', () => { resize(); if (typeof chunkCache !== 'undefined') chunkCache.clear(); });
+resize();
 
 /* ------------------------------ input ------------------------------ */
 const keys = Object.create(null);
@@ -305,12 +316,18 @@ const P = {
 /* ----------------------------- enemies ----------------------------- */
 /* after: seconds before the type joins the pool. weight: relative spawn odds. */
 const ENEMIES = [
-  { id:'bat',   name:'Bat',      after:0,   weight:10, hp:9,   spd:96,  dmg:6,  xp:1, r:9,  color:'#8f6bd8', shape:'bat' },
-  { id:'skel',  name:'Skeleton', after:70,  weight:9,  hp:20,  spd:78,  dmg:9,  xp:2, r:11, color:'#d8d2c0', shape:'skull' },
-  { id:'slime', name:'Rotling',  after:130, weight:8,  hp:34,  spd:56,  dmg:11, xp:3, r:14, color:'#5fbf7a', shape:'blob' },
-  { id:'wisp',  name:'Wisp',     after:230, weight:7,  hp:26,  spd:122, dmg:12, xp:3, r:10, color:'#63d7ff', shape:'wisp' },
-  { id:'brute', name:'Brute',    after:330, weight:5,  hp:105, spd:48,  dmg:20, xp:7, r:19, color:'#e0704a', shape:'blob' },
-  { id:'knight',name:'Revenant', after:470, weight:5,  hp:180, spd:70,  dmg:24, xp:9, r:16, color:'#9aa7d6', shape:'skull' }
+  { id:'intern',  name:'Intern',         after:0,   weight:10, hp:9,   spd:96,  dmg:6,  xp:1, r:9,
+    color:'#7fb3e8', skin:'#f0c9a0', hair:'#3b2c22', shape:'worker', acc:'coffee' },
+  { id:'sales',   name:'Sales Rep',      after:70,  weight:9,  hp:20,  spd:78,  dmg:9,  xp:2, r:11,
+    color:'#eceff6', skin:'#e8b98a', hair:'#241a12', shape:'worker', acc:'headset' },
+  { id:'manager', name:'Middle Manager', after:130, weight:8,  hp:34,  spd:56,  dmg:11, xp:3, r:14,
+    color:'#7d8ba8', skin:'#f0c9a0', hair:'#6b6257', shape:'worker', acc:'tie' },
+  { id:'email',   name:'Urgent Email',   after:230, weight:7,  hp:26,  spd:122, dmg:12, xp:3, r:10,
+    color:'#63d7ff', skin:'#63d7ff', hair:'#63d7ff', shape:'email',  acc:'' },
+  { id:'guard',   name:'Security',       after:330, weight:5,  hp:105, spd:48,  dmg:20, xp:7, r:19,
+    color:'#54627d', skin:'#c98d5e', hair:'#1b1410', shape:'worker', acc:'badge' },
+  { id:'consult', name:'Consultant',     after:470, weight:5,  hp:180, spd:70,  dmg:24, xp:9, r:16,
+    color:'#454e63', skin:'#f0c9a0', hair:'#0f0d14', shape:'worker', acc:'briefcase' }
 ];
 
 /* Difficulty curves — everything keys off elapsed time. */
@@ -355,28 +372,28 @@ function spawnCluster(){
 }
 
 const BOSSES = [
-  { name:'THE GLUTTON',  color:'#ff7a45', r:36, hp:900,  spd:52, dmg:26 },
-  { name:'BONE TYRANT',  color:'#e8e2d0', r:38, hp:1700, spd:60, dmg:30 },
-  { name:'THE DROWNED',  color:'#59d2ff', r:40, hp:2900, spd:66, dmg:34 },
-  { name:'ASH SOVEREIGN',color:'#ff5470', r:44, hp:4600, spd:70, dmg:40 }
+  { name:'THE REGIONAL MANAGER', color:'#c9743f', r:36, hp:900,  spd:52, dmg:26 },
+  { name:'HEAD OF SALES',        color:'#ded5bf', r:38, hp:1700, spd:60, dmg:30 },
+  { name:'THE AUDITOR',          color:'#5fa8d3', r:40, hp:2900, spd:66, dmg:34 },
+  { name:'THE CFO',              color:'#b0455f', r:44, hp:4600, spd:70, dmg:40 }
 ];
 
 function spawnBoss(final){
   const b = final
-    ? { name:'DEATH', color:'#ffffff', r:54, hp:55000, spd:78, dmg:60 }
+    ? { name:'THE CEO', color:'#f2e7c4', r:54, hp:55000, spd:78, dmg:60 }
     : BOSSES[Math.min(G.bossN, BOSSES.length - 1)];
   const s = final ? 1 : hpScale(G.t) * 0.55;
   const a = Math.random() * TAU, rr = Math.hypot(VW, VH) * 0.5 + 120;
   const e = {
     id: G.nextId++,
-    def: { id:'boss', name:b.name, color:b.color, shape:'boss' },
+    def: { id:'boss', name:b.name, color:b.color, shape:'boss', skin:'#f0c9a0', hair:'#2a2118' },
     x: G.player.x + Math.cos(a) * rr, y: G.player.y + Math.sin(a) * rr,
     r: b.r, hp: b.hp * s, maxHp: b.hp * s, spd: b.spd, dmg: b.dmg,
     xp: 40, boss: true, final: !!final,
     vx:0, vy:0, kx:0, ky:0, flash:0, touchCd:0, wob:0, name:b.name
   };
   G.enemies.push(e);
-  banner(b.name + ' APPROACHES', b.color);
+  banner(b.name + ' IS COMING', b.color);
   G.shake = Math.max(G.shake, 14);
   if (!final) G.bossN++;
   return e;
@@ -405,10 +422,10 @@ function addBullet(o){
 
 const WEAPONS = {
   blade: {
-    id:'blade', name:'Bone Blade', icon:'\u{1F5E1}️', max:8,
-    desc: l => l === 0 ? 'Slashes a wide arc in the way you are moving.'
-      : (l < 3 ? 'More damage and reach.' : l === 2 ? 'Adds a second slash behind you.'
-      : l === 5 ? 'Adds a third slash.' : 'More damage and reach.'),
+    id:'blade', name:'Letter Opener', icon:'\u2702\uFE0F', max:8,
+    desc: l => l === 0 ? 'Opens the mail, and anyone standing in front of it.'
+      : (l < 3 ? 'Sharper edge, longer reach.' : l === 2 ? 'Adds a second swing behind you.'
+      : l === 5 ? 'Adds a third swing.' : 'Sharper edge, longer reach.'),
     cd: l => Math.max(0.42, 1.05 - 0.06 * l) * P.cd(),
     fire(l){
       const dmg = (11 + 5 * l) * P.dmg();
@@ -424,9 +441,9 @@ const WEAPONS = {
   },
 
   bolt: {
-    id:'bolt', name:'Soul Bolt', icon:'\u{1F52E}', max:8,
-    desc: l => l === 0 ? 'Homing bolt that seeks the closest foe.'
-      : (l % 2 ? 'Fires an extra bolt.' : 'More damage and pierce.'),
+    id:'bolt', name:'Email Blast', icon:'\u{1F4E7}', max:8,
+    desc: l => l === 0 ? 'Reply-all. It finds the nearest colleague on its own.'
+      : (l % 2 ? 'Adds another recipient.' : 'Harsher subject line. Cuts deeper.'),
     cd: l => Math.max(0.3, 0.9 - 0.06 * l) * P.cd(),
     fire(l){
       const count = 1 + ((l / 2) | 0) + P.extra();
@@ -439,15 +456,15 @@ const WEAPONS = {
         if (!tg) a += rand(-0.4, 0.4);
         addBullet({ x:G.player.x, y:G.player.y, vx:Math.cos(a) * 470, vy:Math.sin(a) * 470,
                     r: 6 * P.area(), dmg, pierce: 1 + ((l / 4) | 0), life: 1.5,
-                    color:'#b98bff', kind:'bolt', homing: 2.2 });
+                    color:'#8fe3ff', kind:'mail', homing: 2.2 });
       }
     }
   },
 
   axe: {
-    id:'axe', name:'Cleaver', icon:'\u{1FA93}', max:8,
-    desc: l => l === 0 ? 'Hurls spinning axes overhead. Pierces everything.'
-      : (l % 2 ? 'Throws an extra axe.' : 'Heavier axes.'),
+    id:'axe', name:'Stapler', icon:'\u{1F4CE}', max:8,
+    desc: l => l === 0 ? 'Lobs heavy staplers overhead. Goes clean through.'
+      : (l % 2 ? 'Throws an extra stapler.' : 'Industrial grade. Much heavier.'),
     cd: l => Math.max(0.75, 1.7 - 0.09 * l) * P.cd(),
     fire(l){
       const count = 1 + (((l - 1) / 2) | 0) + P.extra();
@@ -455,15 +472,15 @@ const WEAPONS = {
       for (let i = 0; i < count; i++){
         addBullet({ x:G.player.x, y:G.player.y, vx:rand(-150, 150), vy:rand(-430, -330),
                     r:13 * P.area(), dmg, pierce:999, life:2.4, grav:560,
-                    color:'#dfe6f2', kind:'axe', spin: rand(9, 13) * (Math.random() < .5 ? -1 : 1) });
+                    color:'#c9ced8', kind:'stapler', spin: rand(9, 13) * (Math.random() < .5 ? -1 : 1) });
       }
     }
   },
 
   storm: {
-    id:'storm', name:'Storm Call', icon:'⚡', max:8,
-    desc: l => l === 0 ? 'Lightning smites random foes from above.'
-      : (l % 2 ? 'One more bolt of lightning.' : 'Stronger strikes.'),
+    id:'storm', name:'Fluorescent Surge', icon:'\u{1F4A1}', max:8,
+    desc: l => l === 0 ? 'The ceiling lights blow out over whoever is under them.'
+      : (l % 2 ? 'One more fixture goes.' : 'A nastier voltage.'),
     cd: l => Math.max(1.1, 3.1 - 0.16 * l) * P.cd(),
     fire(l){
       const strikes = 1 + ((l / 2) | 0);
@@ -481,17 +498,18 @@ const WEAPONS = {
 
   /* Passive-fire weapons: no cast, updated continuously. */
   aura: {
-    id:'aura', name:'Rot Aura', icon:'☢️', max:8, passiveFire: true,
-    desc: l => l === 0 ? 'A festering ring that melts anything near you.' : 'Wider and more toxic.',
+    id:'aura', name:'Microwaved Fish', icon:'\u{1F41F}', max:8, passiveFire: true,
+    desc: l => l === 0 ? 'You reheated it in the shared kitchen. The smell does the rest.'
+      : 'It spreads. It lingers.',
     radius: l => (56 + 7 * l) * P.area(),
     tick: 0.5,
     dps: l => (5 + 2.6 * l) * P.dmg()
   },
 
   orb: {
-    id:'orb', name:'Grimoire', icon:'\u{1F4D6}', max:8, passiveFire: true,
-    desc: l => l === 0 ? 'Bound tomes circle you, crushing what they touch.'
-      : (l % 2 ? 'Summons another tome.' : 'Tomes hit harder.'),
+    id:'orb', name:'TPS Reports', icon:'\u{1F4C4}', max:8, passiveFire: true,
+    desc: l => l === 0 ? 'A ring of binders orbits you, flattening anyone who leans in.'
+      : (l % 2 ? 'Another binder joins the stack.' : 'Thicker. Denser. Heavier.'),
     count: l => 1 + ((l / 2) | 0) + P.extra(),
     radius: l => (72 + 4 * l) * P.area(),
     dmg: l => (10 + 5 * l) * P.dmg()
@@ -500,14 +518,14 @@ const WEAPONS = {
 
 /* ---------------------------- passives ----------------------------- */
 const PASSIVES = {
-  might:  { id:'might',  name:'Spinach',    icon:'\u{1F96C}', max:5, desc:'+12% damage' },
-  swift:  { id:'swift',  name:'Wing Boots', icon:'\u{1F45F}', max:5, desc:'+8% move speed' },
-  armor:  { id:'armor',  name:'Iron Plate', icon:'\u{1F6E1}️', max:5, desc:'-1.2 damage taken per hit' },
-  magnet: { id:'magnet', name:'Lodestone',  icon:'\u{1F9F2}', max:5, desc:'+30% pickup range' },
-  heart:  { id:'heart',  name:'Hollow Heart',icon:'❤️', max:5, desc:'+25 max health, heals you' },
-  haste:  { id:'haste',  name:'Candelabra', icon:'\u{1F56F}️', max:5, desc:'-8% weapon cooldowns' },
-  growth: { id:'growth', name:'Sigil Ring', icon:'\u{1F48D}', max:5, desc:'+12% weapon size' },
-  dupe:   { id:'dupe',   name:'Duplicator', icon:'♻️', max:2, desc:'+1 projectile on every weapon' }
+  might:  { id:'might',  name:'Double Espresso',    icon:'\u2615',            max:5, desc:'+12% damage' },
+  swift:  { id:'swift',  name:'Ergonomic Sneakers', icon:'\u{1F45F}',         max:5, desc:'+8% move speed' },
+  armor:  { id:'armor',  name:'Ergonomic Chair',    icon:'\u{1FA91}',         max:5, desc:'-1.2 damage taken per hit' },
+  magnet: { id:'magnet', name:'Magnetic Badge',     icon:'\u{1F9F2}',         max:5, desc:'+30% pickup range' },
+  heart:  { id:'heart',  name:'Health Plan',        icon:'\u2764\uFE0F',      max:5, desc:'+25 max health, heals you' },
+  haste:  { id:'haste',  name:'Energy Drink',       icon:'\u{1F964}',         max:5, desc:'-8% weapon cooldowns' },
+  growth: { id:'growth', name:'Corner Office',      icon:'\u{1F3E2}',         max:5, desc:'+12% weapon size' },
+  dupe:   { id:'dupe',   name:'Photocopier',        icon:'\u{1F5A8}\uFE0F',   max:2, desc:'+1 projectile on every weapon' }
 };
 
 const MAX_WEAPONS = 6, MAX_PASSIVES = 6;
@@ -582,7 +600,7 @@ function killEnemy(e){
   burst(e.x, e.y, e.def.color, e.boss ? 40 : 7, e.boss ? 320 : 170);
   if (e.boss){
     G.shake = Math.max(G.shake, 16);
-    banner(e.def.name + ' FALLS', '#ffcf5c');
+    banner(e.def.name + ' HAS BEEN LET GO', '#ffcf5c');
     for (let i = 0; i < 8; i++) G.gems.push(mkGem(e.x + rand(-40, 40), e.y + rand(-40, 40), 12));
     G.drops.push({ x:e.x, y:e.y, kind:'chest', r:13, bob:0 });
     if (e.final){ G.won = true; endRun(true); }
@@ -828,7 +846,7 @@ function updatePickups(dt){
         float(p.x, p.y - 24, '+30', '#5fe08a', 17);
       } else {
         G.pendingLevels++;                    // chest = a free upgrade pick
-        float(p.x, p.y - 24, 'TREASURE!', '#ffcf5c', 18);
+        float(p.x, p.y - 24, 'BONUS!', '#ffcf5c', 18);
       }
       burst(d.x, d.y, d.kind === 'heart' ? '#ff4d6d' : '#ffcf5c', 14, 150);
       G.drops.splice(i, 1);
@@ -883,107 +901,286 @@ function updateSpawns(dt){
 
 /* ----------------------------- render ------------------------------ */
 function hash2(x, y){
-  let n = (x * 374761393 + y * 668265263) | 0;
-  n = (n ^ (n >> 13)) * 1274126177 | 0;
-  return ((n ^ (n >> 16)) >>> 0) / 4294967296;
+  let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) | 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+
+/* The floor is baked into 216px chunks once and blitted after that, so props
+   can carry real detail without costing anything per frame. */
+const CS = 72, CH = 3, CHUNK = CS * CH, CHUNK_MAX = 260;
+let chunkCache = new Map();
+
+function rngFor(cx, cy){
+  let s = (Math.imul(cx, 374761393) + Math.imul(cy, 668265263)) >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+function propDesk(g, r){
+  const wood = r() < 0.5;
+  g.rotate((r() < 0.5 ? 0 : Math.PI / 2) + (r() - 0.5) * 0.12);
+  g.fillStyle = 'rgba(0,0,0,.28)';
+  g.fillRect(-24, -13, 48, 30);                      // contact shadow
+  g.fillStyle = wood ? '#6a5238' : '#4b5160';        // desktop
+  g.fillRect(-25, -15, 50, 29);
+  g.fillStyle = wood ? '#6f5740' : '#4f5666';        // lit top edge
+  g.fillRect(-25, -15, 50, 3);
+  g.fillStyle = '#1b1f28';                            // monitor
+  g.fillRect(-9, -12, 18, 11);
+  g.fillStyle = '#24455c'; g.fillRect(-7.5, -10.5, 15, 8);
+  g.fillStyle = 'rgba(140,220,255,.14)'; g.fillRect(-7.5, -10.5, 15, 3);
+  g.fillStyle = '#9aa1ad'; g.fillRect(-8, 2, 16, 5); // keyboard
+  g.fillStyle = '#c3c8d2';                            // mug
+  g.beginPath(); g.arc(15, 6, 3, 0, TAU); g.fill();
+  g.fillStyle = '#3a3f4d';                            // chair
+  g.beginPath(); g.arc(0, 24, 8, 0, TAU); g.fill();
+  g.strokeStyle = '#2a2e39'; g.lineWidth = 3;
+  g.beginPath(); g.arc(0, 24, 8, 0.4, Math.PI - 0.4); g.stroke();
+}
+
+function propCubicle(g, r){
+  g.rotate(r() < 0.5 ? 0 : Math.PI / 2);
+  g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(-30, -4, 62, 14);
+  g.fillStyle = '#414a5e'; g.fillRect(-30, -7, 60, 15);   // fabric partition
+  g.fillStyle = '#525c73'; g.fillRect(-30, -7, 60, 4);    // top rail
+  g.fillStyle = '#2d3444'; g.fillRect(-30, 6, 60, 2);     // base shadow
+  g.strokeStyle = 'rgba(0,0,0,.22)'; g.lineWidth = 1;
+  for (let i = -24; i < 30; i += 12){ g.beginPath(); g.moveTo(i, -2); g.lineTo(i, 7); g.stroke(); }
+}
+
+function propPlant(g, r){
+  g.fillStyle = 'rgba(0,0,0,.3)';
+  g.beginPath(); g.ellipse(0, 10, 12, 5, 0, 0, TAU); g.fill();
+  g.fillStyle = '#8a5a3a';                                 // pot
+  g.beginPath(); g.moveTo(-9, 2); g.lineTo(9, 2); g.lineTo(6, 12); g.lineTo(-6, 12);
+  g.closePath(); g.fill();
+  for (let i = 0; i < 7; i++){                             // fronds
+    const a = (i / 7) * TAU + r();
+    g.fillStyle = i % 2 ? '#4a8f57' : '#5aa768';
+    g.beginPath();
+    g.ellipse(Math.cos(a) * 9, Math.sin(a) * 8 - 5, 9, 5, a, 0, TAU);
+    g.fill();
+  }
+}
+
+function propCooler(g){
+  g.fillStyle = 'rgba(0,0,0,.3)';
+  g.beginPath(); g.ellipse(0, 12, 10, 4, 0, 0, TAU); g.fill();
+  g.fillStyle = '#b8c0cd'; g.fillRect(-8, -2, 16, 16);      // dispenser
+  g.fillStyle = '#6ba5c0';                                   // bottle
+  g.beginPath(); g.arc(0, -6, 9, 0, TAU); g.fill();
+  g.fillStyle = 'rgba(255,255,255,.28)';
+  g.beginPath(); g.arc(-3, -9, 3, 0, TAU); g.fill();
+}
+
+function propPrinter(g){
+  g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(-13, -7, 28, 20);
+  g.fillStyle = '#5a606e'; g.fillRect(-14, -9, 28, 19);
+  g.fillStyle = '#6b7280'; g.fillRect(-14, -9, 28, 4);
+  g.fillStyle = '#c6ccd6'; g.fillRect(-9, 5, 18, 4);         // output tray
+  g.fillStyle = '#4f9c62'; g.fillRect(9, -6, 2.5, 2.5);      // ready LED
+}
+
+function propCabinet(g){
+  g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(-10, -12, 23, 30);
+  g.fillStyle = '#6a7182'; g.fillRect(-11, -14, 22, 29);
+  g.strokeStyle = '#525869'; g.lineWidth = 1.5;
+  for (let i = -5; i <= 8; i += 9){
+    g.beginPath(); g.moveTo(-11, i); g.lineTo(11, i); g.stroke();
+    g.fillStyle = '#8b93a5'; g.fillRect(-3, i - 6, 6, 2);
+  }
+}
+
+function paintChunk(g, gx, gy){
+  for (let i = 0; i < CH; i++){
+    for (let j = 0; j < CH; j++){
+      const cx = gx * CH + i, cy = gy * CH + j;
+      const ox = i * CS, oy = j * CS;
+      const r = rngFor(cx, cy), h = hash2(cx, cy);
+
+      g.fillStyle = ((cx + cy) & 1) ? '#31363f' : '#363b46';   // carpet tiles
+      g.fillRect(ox, oy, CS, CS);
+      g.fillStyle = 'rgba(255,255,255,.028)';                   // carpet speckle
+      for (let k = 0; k < 26; k++) g.fillRect(ox + r() * CS, oy + r() * CS, 1.6, 1.6);
+      g.strokeStyle = 'rgba(0,0,0,.20)'; g.lineWidth = 1;       // tile seams
+      g.strokeRect(ox + 0.5, oy + 0.5, CS - 1, CS - 1);
+
+      if (h < 0.05){                                            // coffee ring
+        g.strokeStyle = 'rgba(120,80,40,.28)'; g.lineWidth = 2;
+        g.beginPath(); g.arc(ox + 20 + r() * 32, oy + 20 + r() * 32, 5 + r() * 4, 0, TAU); g.stroke();
+        continue;
+      }
+      if (h < 0.10){                                            // dropped paperwork
+        for (let k = 0; k < 3; k++){
+          g.save();
+          g.translate(ox + 22 + r() * 28, oy + 22 + r() * 28); g.rotate(r() * TAU);
+          g.fillStyle = 'rgba(238,241,246,.30)'; g.fillRect(-5, -7, 10, 14);
+          g.restore();
+        }
+        continue;
+      }
+      if (h < 0.66) continue;                                   // open floor
+
+      g.save();
+      g.translate(ox + CS / 2 + (r() - 0.5) * 14, oy + CS / 2 + (r() - 0.5) * 14);
+      if      (h > 0.90) propDesk(g, r);
+      else if (h > 0.84) propCubicle(g, r);
+      else if (h > 0.79) propPlant(g, r);
+      else if (h > 0.75) propCooler(g);
+      else if (h > 0.71) propPrinter(g);
+      else               propCabinet(g);
+      g.restore();
+    }
+  }
+
+  /* One ceiling fixture per chunk, its pool kept clear of the chunk edge so
+     neighbouring chunks never show a seam. */
+  const c = CHUNK / 2;
+  const lg = g.createRadialGradient(c, c, 8, c, c, CHUNK * 0.5);
+  lg.addColorStop(0, 'rgba(216,234,255,.14)');
+  lg.addColorStop(0.55, 'rgba(216,234,255,.05)');
+  lg.addColorStop(1, 'rgba(214,232,255,0)');
+  g.fillStyle = lg;
+  g.fillRect(0, 0, CHUNK, CHUNK);
+
+}
+
+function getChunk(gx, gy){
+  const key = gx * 46337 + gy;
+  let c = chunkCache.get(key);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = Math.ceil(CHUNK * DPR);
+  const g = c.getContext('2d');
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  paintChunk(g, gx, gy);
+  chunkCache.set(key, c);
+  if (chunkCache.size > CHUNK_MAX) chunkCache.delete(chunkCache.keys().next().value);
+  return c;
 }
 
 function drawGround(){
-  const CS = 72;
-  const x0 = Math.floor((G.cam.x - VW / 2) / CS) - 1, x1 = Math.floor((G.cam.x + VW / 2) / CS) + 1;
-  const y0 = Math.floor((G.cam.y - VH / 2) / CS) - 1, y1 = Math.floor((G.cam.y + VH / 2) / CS) + 1;
-  for (let cx = x0; cx <= x1; cx++){
-    for (let cy = y0; cy <= y1; cy++){
-      const h = hash2(cx, cy);
-      ctx.fillStyle = ((cx + cy) & 1) ? '#141029' : '#181234';
-      ctx.fillRect(cx * CS, cy * CS, CS, CS);
-      const px = cx * CS + h * 44 + 14, py = cy * CS + hash2(cy, cx) * 44 + 14;
-      if (h > 0.90){                       // gravestone
-        ctx.fillStyle = '#241c4a';
-        ctx.beginPath();
-        ctx.moveTo(px - 9, py + 12); ctx.lineTo(px - 9, py - 4);
-        ctx.arc(px, py - 4, 9, Math.PI, 0); ctx.lineTo(px + 9, py + 12);
-        ctx.closePath(); ctx.fill();
-        ctx.fillStyle = '#2f2660'; ctx.fillRect(px - 11, py + 10, 22, 4);
-      } else if (h > 0.78){                // grass tuft
-        ctx.strokeStyle = '#1d1740'; ctx.lineWidth = 2; ctx.beginPath();
-        for (let k = -1; k <= 1; k++){
-          ctx.moveTo(px + k * 5, py + 6);
-          ctx.lineTo(px + k * 7, py - 5 - (k === 0 ? 4 : 0));
-        }
-        ctx.stroke();
-      } else if (h < 0.06){                // pale bloom
-        ctx.fillStyle = 'rgba(150,120,230,.22)';
-        ctx.beginPath(); ctx.arc(px, py, 3.2, 0, TAU); ctx.fill();
-      }
-    }
+  const x0 = Math.floor((G.cam.x - VW / 2) / CHUNK), x1 = Math.floor((G.cam.x + VW / 2) / CHUNK);
+  const y0 = Math.floor((G.cam.y - VH / 2) / CHUNK), y1 = Math.floor((G.cam.y + VH / 2) / CHUNK);
+  for (let gx = x0; gx <= x1; gx++)
+    for (let gy = y0; gy <= y1; gy++)
+      ctx.drawImage(getChunk(gx, gy), gx * CHUNK, gy * CHUNK, CHUNK, CHUNK);
+}
+
+function drawAccessory(acc, R, skin){
+  switch (acc){
+    case 'coffee':
+      ctx.fillStyle = '#f2f4f8';
+      ctx.fillRect(R * 0.62, R * 0.15, R * 0.34, R * 0.4);
+      ctx.fillStyle = '#7a4a28';
+      ctx.fillRect(R * 0.62, R * 0.15, R * 0.34, R * 0.12);
+      break;
+    case 'headset':
+      ctx.strokeStyle = '#23283a'; ctx.lineWidth = Math.max(1.4, R * 0.13);
+      ctx.beginPath(); ctx.arc(0, -R * 0.62, R * 0.56, Math.PI * 1.12, Math.PI * 1.88); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-R * 0.5, -R * 0.55); ctx.quadraticCurveTo(-R * 0.5, -R * 0.2, -R * 0.16, -R * 0.3);
+      ctx.stroke();
+      break;
+    case 'tie':
+      ctx.fillStyle = '#b0455f';
+      ctx.beginPath();
+      ctx.moveTo(0, -R * 0.1); ctx.lineTo(R * 0.16, R * 0.12);
+      ctx.lineTo(0, R * 0.7); ctx.lineTo(-R * 0.16, R * 0.12);
+      ctx.closePath(); ctx.fill();
+      break;
+    case 'badge':
+      ctx.fillStyle = '#f2f4f8'; ctx.fillRect(-R * 0.42, R * 0.1, R * 0.3, R * 0.38);
+      ctx.fillStyle = '#4f9159'; ctx.fillRect(-R * 0.42, R * 0.1, R * 0.3, R * 0.12);
+      break;
+    case 'briefcase':
+      ctx.fillStyle = '#4a3527'; ctx.fillRect(R * 0.55, R * 0.2, R * 0.5, R * 0.42);
+      ctx.fillStyle = '#c9a227'; ctx.fillRect(R * 0.72, R * 0.14, R * 0.16, R * 0.08);
+      break;
   }
-  ctx.strokeStyle = 'rgba(140,110,225,.10)'; ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let cx = x0; cx <= x1; cx++){ ctx.moveTo(cx * CS, y0 * CS); ctx.lineTo(cx * CS, (y1 + 1) * CS); }
-  for (let cy = y0; cy <= y1; cy++){ ctx.moveTo(x0 * CS, cy * CS); ctx.lineTo((x1 + 1) * CS, cy * CS); }
-  ctx.stroke();
+}
+
+/* One body for every human on the floor — the shirt, the hair and the prop
+   they carry are what tell an intern from the CFO. */
+function drawWorker(e, R, flash){
+  const d = e.def;
+  const body = flash ? '#ffffff' : d.color;
+  const skin = flash ? '#ffffff' : (d.skin || '#f0c9a0');
+
+  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = Math.max(1.2, R * 0.12);
+  ctx.fillStyle = body;
+  ctx.beginPath();                                   // torso
+  ctx.moveTo(-R * 0.78, R * 1.0);
+  ctx.lineTo(-R * 0.66, -R * 0.02);
+  ctx.quadraticCurveTo(0, -R * 0.34, R * 0.66, -R * 0.02);
+  ctx.lineTo(R * 0.78, R * 1.0);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  if (!flash){                                       // collar
+    ctx.fillStyle = 'rgba(255,255,255,.22)';
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.3, -R * 0.16); ctx.lineTo(0, R * 0.22); ctx.lineTo(R * 0.3, -R * 0.16);
+    ctx.closePath(); ctx.fill();
+  }
+
+  ctx.fillStyle = skin;                              // head
+  ctx.beginPath(); ctx.arc(0, -R * 0.64, R * 0.5, 0, TAU); ctx.fill(); ctx.stroke();
+
+  if (!flash){
+    ctx.fillStyle = d.hair || '#2a2118';             // hair
+    ctx.beginPath();
+    ctx.arc(0, -R * 0.64, R * 0.52, Math.PI * 1.02, Math.PI * 1.98);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#1a1420';                       // eyes
+    ctx.beginPath();
+    ctx.arc(-R * 0.19, -R * 0.6, R * 0.09, 0, TAU);
+    ctx.arc(R * 0.19, -R * 0.6, R * 0.09, 0, TAU);
+    ctx.fill();
+    drawAccessory(d.acc, R, skin);
+  }
 }
 
 function drawEnemy(e){
-  const c = e.def.color;
+  const R = e.r * 1.18, d = e.def, flash = e.flash > 0;
   ctx.save();
   ctx.translate(e.x, e.y);
-  /* shadow */
-  ctx.fillStyle = 'rgba(0,0,0,.35)';
-  ctx.beginPath(); ctx.ellipse(0, e.r * 0.75, e.r * 0.85, e.r * 0.3, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,.38)';
+  ctx.beginPath(); ctx.ellipse(0, R * 0.95, R * 0.8, R * 0.3, 0, 0, TAU); ctx.fill();
 
-  const flash = e.flash > 0;
-  ctx.fillStyle = flash ? '#fff' : c;
-  ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 2;
-
-  const s = e.def.shape;
-  if (s === 'bat'){
-    const f = Math.sin(e.wob * 3) * 0.5 + 0.5;
-    ctx.beginPath();
-    ctx.moveTo(-e.r * 2.1, -e.r * f);
-    ctx.quadraticCurveTo(-e.r * 0.6, -e.r * 0.4, 0, 0);
-    ctx.quadraticCurveTo(e.r * 0.6, -e.r * 0.4, e.r * 2.1, -e.r * f);
-    ctx.quadraticCurveTo(e.r * 0.8, e.r * 0.5, 0, e.r * 0.3);
-    ctx.quadraticCurveTo(-e.r * 0.8, e.r * 0.5, -e.r * 2.1, -e.r * f);
-    ctx.fill();
-    ctx.beginPath(); ctx.arc(0, 0, e.r * 0.75, 0, TAU); ctx.fill(); ctx.stroke();
-  } else if (s === 'skull'){
-    ctx.beginPath(); ctx.arc(0, -e.r * 0.15, e.r * 0.85, 0, TAU); ctx.fill(); ctx.stroke();
-    ctx.fillRect(-e.r * 0.45, e.r * 0.45, e.r * 0.9, e.r * 0.45);
-  } else if (s === 'wisp'){
-    ctx.globalAlpha = 0.85;
-    ctx.shadowColor = c; ctx.shadowBlur = 16;
-    ctx.beginPath(); ctx.arc(0, 0, e.r, 0, TAU); ctx.fill();
-    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-  } else if (s === 'boss'){
-    ctx.shadowColor = c; ctx.shadowBlur = 24;
-    ctx.beginPath();
-    for (let i = 0; i < 9; i++){
-      const a = (i / 9) * TAU + e.wob * 0.3;
-      const rr = e.r * (i % 2 ? 0.78 : 1);
-      ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr);
-    }
-    ctx.closePath(); ctx.fill(); ctx.stroke();
+  if (d.shape === 'email'){
+    const w = R * 1.5, h = R * 1.05;
+    ctx.translate(0, Math.sin(e.wob * 2) * 2);
+    ctx.shadowColor = d.color; ctx.shadowBlur = 16;
+    ctx.fillStyle = flash ? '#ffffff' : '#eef8ff';
+    ctx.fillRect(-w, -h, w * 2, h * 2);
     ctx.shadowBlur = 0;
-  } else {                                   // blob
-    const sq = 1 + Math.sin(e.wob * 2) * 0.08;
-    ctx.beginPath(); ctx.ellipse(0, 0, e.r / sq, e.r * sq, 0, 0, TAU); ctx.fill(); ctx.stroke();
-  }
-
-  /* eyes */
-  if (!flash){
-    ctx.fillStyle = e.boss ? '#fff' : '#1a1030';
-    const ey = s === 'skull' ? -e.r * 0.2 : -e.r * 0.15, ex = e.r * 0.32;
-    ctx.beginPath(); ctx.arc(-ex, ey, e.r * 0.16, 0, TAU); ctx.arc(ex, ey, e.r * 0.16, 0, TAU); ctx.fill();
+    ctx.strokeStyle = d.color; ctx.lineWidth = Math.max(1.5, R * 0.16);
+    ctx.strokeRect(-w, -h, w * 2, h * 2);
+    ctx.beginPath();                                  // flap
+    ctx.moveTo(-w, -h); ctx.lineTo(0, h * 0.25); ctx.lineTo(w, -h); ctx.stroke();
+    ctx.fillStyle = '#e0455f';                        // urgent flag
+    ctx.beginPath(); ctx.arc(w * 0.78, -h * 0.78, R * 0.24, 0, TAU); ctx.fill();
+  } else if (d.shape === 'boss'){
+    ctx.shadowColor = d.color; ctx.shadowBlur = 26;
+    drawWorker(e, R, flash);
+    ctx.shadowBlur = 0;
+    if (!flash){
+      ctx.fillStyle = '#e8c34a';                      // the power tie
+      ctx.beginPath();
+      ctx.moveTo(0, -R * 0.12); ctx.lineTo(R * 0.2, R * 0.14);
+      ctx.lineTo(0, R * 0.82); ctx.lineTo(-R * 0.2, R * 0.14);
+      ctx.closePath(); ctx.fill();
+    }
+  } else {
+    drawWorker(e, R, flash);
   }
   ctx.restore();
 
-  if (e.boss || e.hp < e.maxHp){            // health pip
-    const w = e.r * 2, hpw = w * clamp(e.hp / e.maxHp, 0, 1);
-    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(e.x - w / 2, e.y - e.r - 9, w, 3);
+  if (e.boss || e.hp < e.maxHp){
+    const w = R * 2, hpw = w * clamp(e.hp / e.maxHp, 0, 1);
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(e.x - w / 2, e.y - R * 1.6 - 9, w, 3);
     ctx.fillStyle = e.boss ? '#ff5470' : '#ff8fa3';
-    ctx.fillRect(e.x - w / 2, e.y - e.r - 9, hpw, 3);
+    ctx.fillRect(e.x - w / 2, e.y - R * 1.6 - 9, hpw, 3);
   }
 }
 
@@ -1003,21 +1200,37 @@ function drawPlayer(){
   ctx.beginPath(); ctx.arc(0, 0, 30, 0, TAU); ctx.fill();
   if (p.invuln > 0 && Math.floor(p.invuln * 20) % 2) ctx.globalAlpha = 0.45;
 
-  /* cloak */
-  ctx.fillStyle = p.hitFlash > 0 ? '#fff' : '#f2f0ff';
-  ctx.strokeStyle = '#2a1f4d'; ctx.lineWidth = 2.5;
+  const R = p.r, hit = p.hitFlash > 0;
+  ctx.strokeStyle = '#232a3d'; ctx.lineWidth = 2.2;
+  ctx.fillStyle = hit ? '#ffffff' : '#f2f4f8';        // dress shirt
   ctx.beginPath();
-  ctx.moveTo(0, -p.r * 1.25);
-  ctx.quadraticCurveTo(p.r * 1.15, -p.r * 0.5, p.r * 0.85, p.r);
-  ctx.lineTo(-p.r * 0.85, p.r);
-  ctx.quadraticCurveTo(-p.r * 1.15, -p.r * 0.5, 0, -p.r * 1.25);
-  ctx.fill(); ctx.stroke();
-  /* hood shadow + eyes */
-  ctx.fillStyle = '#241a44';
-  ctx.beginPath(); ctx.arc(0, -p.r * 0.35, p.r * 0.6, 0, Math.PI, true); ctx.fill();
-  ctx.fillStyle = '#ffd166';
+  ctx.moveTo(-R * 0.8, R * 1.0);
+  ctx.lineTo(-R * 0.68, -R * 0.02);
+  ctx.quadraticCurveTo(0, -R * 0.36, R * 0.68, -R * 0.02);
+  ctx.lineTo(R * 0.8, R * 1.0);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  ctx.strokeStyle = '#2b3550'; ctx.lineWidth = 1.6;   // lanyard
+  ctx.beginPath();
+  ctx.moveTo(-R * 0.3, -R * 0.14); ctx.lineTo(0, R * 0.3); ctx.lineTo(R * 0.3, -R * 0.14);
+  ctx.stroke();
+  ctx.fillStyle = '#59d2ff'; ctx.fillRect(-R * 0.17, R * 0.3, R * 0.34, R * 0.3);
+
+  ctx.fillStyle = hit ? '#ffffff' : '#f0c9a0';        // head
+  ctx.strokeStyle = '#232a3d'; ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.arc(0, -R * 0.66, R * 0.5, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#43301f';                          // hair
+  ctx.beginPath(); ctx.arc(0, -R * 0.66, R * 0.52, Math.PI * 1.02, Math.PI * 1.98);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = '#ffd166';                          // eyes, facing your heading
   const fx = clamp(p.face.x, -1, 1) * 2.2;
-  ctx.beginPath(); ctx.arc(fx - 3, -p.r * 0.5, 1.9, 0, TAU); ctx.arc(fx + 3, -p.r * 0.5, 1.9, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(fx - 3, -R * 0.62, 1.9, 0, TAU); ctx.arc(fx + 3, -R * 0.62, 1.9, 0, TAU); ctx.fill();
+
+  ctx.fillStyle = '#f2f4f8';                          // the coffee you never finish
+  ctx.fillRect(R * 0.62, R * 0.1, R * 0.36, R * 0.42);
+  ctx.fillStyle = '#7a4a28';
+  ctx.fillRect(R * 0.62, R * 0.1, R * 0.36, R * 0.12);
   ctx.restore();
 }
 
@@ -1038,28 +1251,46 @@ function drawWorld(){
     ctx.stroke();
   }
 
-  /* gems */
+  /* XP — sticky notes off the pad */
   for (const g of G.gems){
-    const c = g.value >= 12 ? '#ffcf5c' : g.value >= 3 ? '#59ff9d' : '#59d2ff';
-    ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(Math.sin(g.bob + performance.now() / 700) * 0.4);
-    ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 8;
-    const s = g.value >= 12 ? 6 : 4.2;
-    ctx.beginPath(); ctx.moveTo(0, -s); ctx.lineTo(s, 0); ctx.lineTo(0, s); ctx.lineTo(-s, 0);
-    ctx.closePath(); ctx.fill(); ctx.restore();
+    const c = g.value >= 12 ? '#ffcf5c' : g.value >= 3 ? '#a6f06f' : '#7fd8ff';
+    const s = g.value >= 12 ? 7 : g.value >= 3 ? 5.6 : 4.8;
+    ctx.save();
+    ctx.translate(g.x, g.y);
+    ctx.rotate(Math.sin(g.bob + performance.now() / 900) * 0.25);
+    ctx.shadowColor = c; ctx.shadowBlur = 9;
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.moveTo(-s, -s); ctx.lineTo(s, -s); ctx.lineTo(s, s * 0.4);
+    ctx.lineTo(s * 0.4, s); ctx.lineTo(-s, s);
+    ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(0,0,0,.22)';                  // folded corner
+    ctx.beginPath(); ctx.moveTo(s, s * 0.4); ctx.lineTo(s * 0.4, s); ctx.lineTo(s * 0.4, s * 0.4);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
   }
   ctx.shadowBlur = 0;
 
   /* drops */
   for (const d of G.drops){
     const y = d.y + Math.sin(d.bob) * 3;
-    if (d.kind === 'heart'){
-      ctx.fillStyle = '#ff4d6d'; ctx.shadowColor = '#ff4d6d'; ctx.shadowBlur = 10;
-      ctx.beginPath(); ctx.arc(d.x - 4, y - 2, 5, 0, TAU); ctx.arc(d.x + 4, y - 2, 5, 0, TAU);
-      ctx.moveTo(d.x - 9, y); ctx.lineTo(d.x, y + 10); ctx.lineTo(d.x + 9, y); ctx.closePath(); ctx.fill();
-    } else {
-      ctx.fillStyle = '#ffcf5c'; ctx.shadowColor = '#ffcf5c'; ctx.shadowBlur = 14;
-      ctx.fillRect(d.x - 12, y - 9, 24, 18);
-      ctx.fillStyle = '#8a6420'; ctx.fillRect(d.x - 12, y - 2, 24, 4);
+    if (d.kind === 'heart'){                            // fresh coffee
+      ctx.shadowColor = '#ffb37a'; ctx.shadowBlur = 12;
+      ctx.fillStyle = '#f6f8fc';
+      ctx.beginPath();
+      ctx.moveTo(d.x - 7, y - 9); ctx.lineTo(d.x + 7, y - 9);
+      ctx.lineTo(d.x + 5, y + 9); ctx.lineTo(d.x - 5, y + 9);
+      ctx.closePath(); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#7a4a28'; ctx.fillRect(d.x - 7, y - 9, 14, 4);
+      ctx.fillStyle = '#c0724a'; ctx.fillRect(d.x - 6, y - 1, 12, 5);
+    } else {                                             // performance bonus
+      ctx.shadowColor = '#ffcf5c'; ctx.shadowBlur = 16;
+      ctx.fillStyle = '#c89a4e'; ctx.fillRect(d.x - 13, y - 9, 26, 18);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#e0b768'; ctx.fillRect(d.x - 13, y - 9, 26, 5);
+      ctx.fillStyle = '#8a6420'; ctx.fillRect(d.x - 3, y - 9, 6, 18);
     }
     ctx.shadowBlur = 0;
   }
@@ -1068,15 +1299,21 @@ function drawWorld(){
 
   /* slashes */
   for (const s of G.slashes){
-    const k = s.life / s.maxLife;
-    ctx.save(); ctx.translate(s.x, s.y);
-    ctx.globalAlpha = k * 0.8;
-    const g = ctx.createRadialGradient(0, 0, s.range * 0.3, 0, 0, s.range);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(210,225,255,.95)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.moveTo(0, 0);
-    ctx.arc(0, 0, s.range * (1.25 - k * 0.25), s.ang - s.arc / 2, s.ang + s.arc / 2);
-    ctx.closePath(); ctx.fill();
+    const k = clamp(s.life / s.maxLife, 0, 1);
+    const prog = 1 - k;
+    const a0 = s.ang - s.arc / 2, a1 = s.ang + s.arc / 2;
+    const r = s.range * (0.72 + prog * 0.34);
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.lineCap = 'round';
+    ctx.shadowColor = '#dbe6ff'; ctx.shadowBlur = 12 * k;
+    ctx.globalAlpha = Math.min(1, k * 1.7);
+    ctx.strokeStyle = '#eef3ff'; ctx.lineWidth = 4 + k * 6;
+    ctx.beginPath(); ctx.arc(0, 0, r, a0, a1); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha *= 0.32; ctx.lineWidth = 2;
+    ctx.strokeStyle = '#b9cdf5';
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.7, a0 + 0.18, a1 - 0.18); ctx.stroke();
     ctx.globalAlpha = 1; ctx.restore();
   }
 
@@ -1103,19 +1340,28 @@ function drawWorld(){
   /* bullets */
   for (const b of G.bullets){
     ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot);
-    if (b.kind === 'axe'){
+    if (b.kind === 'stapler'){
       const r = b.r;
-      ctx.fillStyle = '#7d5a30';                       // haft
-      ctx.fillRect(-r * 0.13, -r * 0.5, r * 0.26, r * 1.6);
-      ctx.fillStyle = b.color;                          // twin blades
-      ctx.strokeStyle = '#4a4f5e'; ctx.lineWidth = 1.5;
-      for (const sgn of [1, -1]){
-        ctx.beginPath();
-        ctx.moveTo(sgn * r * 0.12, -r * 0.62);
-        ctx.quadraticCurveTo(sgn * r * 1.15, -r * 0.66, sgn * r * 0.95, r * 0.05);
-        ctx.quadraticCurveTo(sgn * r * 0.6, -r * 0.2, sgn * r * 0.12, -r * 0.1);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      }
+      ctx.fillStyle = 'rgba(0,0,0,.3)';
+      ctx.fillRect(-r * 0.9, -r * 0.3, r * 1.9, r * 0.85);
+      ctx.fillStyle = '#3d4250';                       // base
+      ctx.fillRect(-r, -r * 0.36, r * 2, r * 0.72);
+      ctx.fillStyle = b.color;                         // arm
+      ctx.fillRect(-r, -r * 0.72, r * 1.85, r * 0.5);
+      ctx.fillStyle = '#c0392b';                       // hinge
+      ctx.fillRect(-r, -r * 0.72, r * 0.4, r * 1.1);
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
+      ctx.strokeRect(-r, -r * 0.72, r * 1.85, r * 0.5);
+    } else if (b.kind === 'mail'){
+      const w = b.r * 1.35, h = b.r * 0.92;
+      ctx.rotate(Math.atan2(b.vy, b.vx) - b.rot);
+      ctx.shadowColor = b.color; ctx.shadowBlur = 12;
+      ctx.fillStyle = '#eef8ff';
+      ctx.fillRect(-w, -h, w * 2, h * 2);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = b.color; ctx.lineWidth = 1.6;
+      ctx.strokeRect(-w, -h, w * 2, h * 2);
+      ctx.beginPath(); ctx.moveTo(-w, -h); ctx.lineTo(0, h * 0.3); ctx.lineTo(w, -h); ctx.stroke();
     } else {
       ctx.shadowColor = b.color; ctx.shadowBlur = 12; ctx.fillStyle = b.color;
       ctx.beginPath(); ctx.ellipse(0, 0, b.r * 1.5, b.r * 0.8, Math.atan2(b.vy, b.vx) - b.rot, 0, TAU);
@@ -1171,7 +1417,7 @@ function render(){
   /* boss bar */
   const boss = G.enemies.find(e => e.boss && !e.dead);
   if (boss){
-    const w = Math.min(420, VW - 60), x = (VW - w) / 2, y = 78;
+    const w = Math.min(420, VW - 60), x = (VW - w) / 2, y = 100;
     ctx.fillStyle = 'rgba(10,7,18,.8)'; ctx.fillRect(x - 2, y - 2, w + 4, 16);
     ctx.fillStyle = '#ff5470';
     ctx.fillRect(x, y, w * clamp(boss.hp / boss.maxHp, 0, 1), 12);
@@ -1226,7 +1472,7 @@ requestAnimationFrame(frame);
 const el = {
   xp: $('xpbar').firstElementChild, xpTxt: $('xpbar').lastElementChild,
   hp: $('hpbar').firstElementChild, hpTxt: $('hpbar').lastElementChild,
-  lvl: $('lvltag'), timer: $('timer'), stats: $('stats'), loadout: $('loadout')
+  lvl: $('lvltag'), timer: $('timer'), stats: $('stats'), loadout: $('loadout'), clock: $('clock')
 };
 
 function updateHUD(){
@@ -1236,7 +1482,8 @@ function updateHUD(){
   el.hpTxt.textContent = Math.ceil(p.hp) + ' / ' + p.maxHp;
   el.lvl.textContent = 'LV ' + p.level;
   el.timer.textContent = fmtTime(G.t);
-  el.stats.innerHTML = `<b>${G.kills}</b> slain<br>${G.enemies.length} on screen`;
+  el.stats.innerHTML = `<b>${G.kills}</b> terminated<br>${G.enemies.length} on the floor`;
+  el.clock.textContent = officeClock(G.t);
 }
 
 function renderLoadout(){
@@ -1251,11 +1498,11 @@ function openLevelUp(){
   G.pendingLevels--;
   G.mode = 'levelup';
   currentCards = rollUpgrades();
-  $('lvltitle').textContent = 'LEVEL ' + G.player.level;
+  $('lvltitle').textContent = 'PROMOTION \u2014 LEVEL ' + G.player.level;
   $('cards').innerHTML = currentCards.map((o, i) => {
     let ico, nm, lvTxt, ds, isNew = false;
     if (o.kind === 'heal'){
-      ico = '\u{1F356}'; nm = 'Roast Chicken'; lvTxt = 'RECOVERY'; ds = 'Restore 40 health.';
+      ico = '\u{1F355}'; nm = 'Free Lunch'; lvTxt = 'RECOVERY'; ds = 'Someone ordered in. Restore 40 health.';
     } else if (o.kind === 'w'){
       const W = WEAPONS[o.id];
       ico = W.icon; nm = W.name; isNew = o.lv === 0;
@@ -1306,9 +1553,9 @@ function togglePause(){
 }
 
 function runStatsHTML(){
-  return `<div>TIME<b>${fmtTime(G.t)}</b></div>
+  return `<div>WORKED<b>${fmtTime(G.t)}</b></div>
           <div>LEVEL<b>${G.player.level}</b></div>
-          <div>SLAIN<b>${G.kills}</b></div>`;
+          <div>TERMINATED<b>${G.kills}</b></div>`;
 }
 
 /* ---------------------------- best score --------------------------- */
@@ -1326,8 +1573,8 @@ function saveBest(){
 function renderBest(){
   const b = loadBest();
   $('best').innerHTML = b
-    ? `<div>BEST TIME<b>${fmtTime(b.t)}</b></div><div>LEVEL<b>${b.level}</b></div><div>SLAIN<b>${b.kills}</b></div>`
-    : `<div style="color:#6b6193">No runs yet. The graveyard awaits.</div>`;
+    ? `<div>BEST SHIFT<b>${fmtTime(b.t)}</b></div><div>LEVEL<b>${b.level}</b></div><div>TERMINATED<b>${b.kills}</b></div>`
+    : `<div style="color:#6b6193">No shifts logged yet.</div>`;
 }
 
 /* --------------------------- run lifecycle ------------------------- */
@@ -1354,23 +1601,23 @@ function startRun(){
   show('s-title', false); show('s-over', false); show('s-pause', false); show('s-level', false);
   G.mode = 'playing';
   last = performance.now();
-  banner('SURVIVE', '#a678ff');
+  banner('CLOCK IN', '#a678ff');
 }
 
 function endRun(won){
   G.mode = 'dead';
   saveBest();
-  $('overtitle').textContent = won ? 'YOU SURVIVED' : 'YOU DIED';
+  $('overtitle').textContent = won ? 'CLOCKING OUT' : "YOU'RE FIRED";
   $('overtitle').style.background = won
     ? 'linear-gradient(180deg,#fff,#ffcf5c)' : 'linear-gradient(180deg,#fff,#ff4d6d)';
   $('overtitle').style.webkitBackgroundClip = 'text';
   $('overtitle').style.backgroundClip = 'text';
   $('oversub').textContent = won
-    ? 'Dawn breaks. Death itself lies broken at your feet.'
-    : pick(['The night claims another.', 'The horde closes over you.',
-            'So close to dawn.', 'Your lantern gutters out.']);
+    ? "It's 5:00 PM. The CEO is face down by the coffee machine. Go home."
+    : pick(['HR will be in touch.', 'Security is escorting you out.',
+            'Your badge has been deactivated.', 'So close to the end of the day.']);
   $('overstats').innerHTML = runStatsHTML();
-  $('againbtn').textContent = won ? 'PLAY AGAIN' : 'TRY AGAIN';
+  $('againbtn').textContent = won ? 'ANOTHER SHIFT' : 'CLOCK BACK IN';
   setTimeout(() => show('s-over', true), won ? 900 : 550);
 }
 
