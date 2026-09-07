@@ -1,8 +1,37 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kevingodelmann</title>
+<style>
+  :root{color-scheme:dark}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+       background:radial-gradient(ellipse at top,#1a1338,#0a0712 60%);color:#e8e3ff;
+       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.7}
+  main{width:min(560px,100%)}
+  h1{font-size:clamp(26px,6vw,38px);margin:0 0 6px;letter-spacing:1px}
+  p{color:#9b91c4;margin:0 0 8px}
+  .card{display:block;margin-top:28px;padding:20px 22px;text-decoration:none;color:inherit;
+        background:linear-gradient(180deg,#1d1638,#15102a);border:1px solid #332a5c;
+        border-radius:14px;transition:transform .12s,border-color .12s,box-shadow .12s}
+  .card:hover{transform:translateY(-3px);border-color:#a678ff;box-shadow:0 12px 32px rgba(166,120,255,.22)}
+  .card h2{margin:0 0 4px;font-size:19px;color:#ffcf5c}
+  .card p{margin:0;font-size:13px}
+  .tag{display:inline-block;margin-top:10px;font-size:11px;color:#a678ff;letter-spacing:1px}
+</style>
+</head>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
-<p>Test</p>
+<main>
+  <h1>Hello World</h1>
+  <p>I'm hosted with GitHub Pages.</p>
+
+  <a class="card" href="game/">
+    <h2>&#127918; Nightfall Survivors</h2>
+    <p>A survivors-like in the browser. Your weapons fire themselves &mdash; you just
+       move, grab gems, and pick upgrades. Survive 20 minutes.</p>
+    <span class="tag">PLAY NOW &rarr;</span>
+  </a>
+</main>
 </body>
 </html>
