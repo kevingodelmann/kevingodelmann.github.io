@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flybrain Dashboard</title>
+<style>
+  :root{
+    --bg:#0a0712; --panel:#15102a; --panel2:#1d1638;
+    --line:#332a5c; --text:#e8e3ff; --dim:#9b91c4;
+    --gold:#ffcf5c; --xp:#59d2ff; --hp:#ff4d6d; --acc:#a678ff; --good:#5fe08a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden}
+  #layout{display:grid;grid-template-columns:1fr 1fr;height:100vh}
+  #left{position:relative;border-right:1px solid var(--line)}
+  #left iframe{width:100%;height:100%;border:0}
+  #right{display:flex;flex-direction:column;padding:10px;gap:10px;overflow:auto}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .panel h2{margin:0 0 8px;font-size:13px;color:var(--acc);text-transform:uppercase;letter-spacing:.05em}
+  #circuit{width:100%;height:auto;background:radial-gradient(ellipse at 50% 40%,#1a1330,#0a0712 75%)}
+  .node{transition:opacity .25s linear, r .25s linear}
+  .brain-outline{fill:rgba(166,120,255,0.05);stroke:rgba(166,120,255,0.35);stroke-width:1.5}
+  .flow-pulse{opacity:0}
+  .legend{font-size:9px;fill:var(--dim)}
+  .legend-dot{stroke:none}
+  #stats-row{display:flex;gap:8px}
+  .stat{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
+  .stat .v{font-size:20px;font-weight:700;color:var(--gold)}
+  .stat .l{font-size:10px;color:var(--dim);margin-top:2px}
+  #chart{width:100%;height:160px;background:var(--panel2);border-radius:8px}
+  .binbars{display:flex;gap:2px;height:60px;align-items:flex-end}
+  .binbars .bar{flex:1;background:var(--acc);border-radius:2px 2px 0 0;min-height:2px;position:relative}
+  .binbars.app .bar{background:var(--good)}
+  .binbars .bar.idle{background:var(--dim)}
+  .binbars .bar span{position:absolute;bottom:-14px;left:0;right:0;text-align:center;font-size:8px;color:var(--dim)}
+  #status{font-size:11px;color:var(--dim)}
+  #status.live{color:var(--good)}
+</style>
+</head>
+<body>
+<div id="layout">
+  <div id="left"><iframe src="index.html"></iframe></div>
+  <div id="right">
+    <div class="panel">
+      <h2>Connectome activity <span id="status">connecting…</span></h2>
+      <svg id="circuit" viewBox="0 0 480 320"></svg>
+    </div>
+    <div class="panel">
+      <h2>Current decision</h2>
+      <div id="stats-row">
+        <div class="stat"><div class="v" id="s-suppression">–</div><div class="l">aversive brake (↓ on damage)</div></div>
+        <div class="stat"><div class="v" id="s-potentiation">–</div><div class="l">appetitive drive (↑ on XP)</div></div>
+        <div class="stat"><div class="v" id="s-esc-hits">0</div><div class="l">hits taken</div></div>
+        <div class="stat"><div class="v" id="s-app-hits">0</div><div class="l">gems learned</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Learning progress over time</h2>
+      <canvas id="chart" width="440" height="160"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Escape memory by threat direction (lower = more scared)</h2>
+      <div id="binbars-esc"></div>
+    </div>
+    <div class="panel">
+      <h2>Pursuit memory by gem direction (higher = more eager)</h2>
+      <div id="binbars-app"></div>
+    </div>
+  </div>
+</div>
+<script>
+const FLY_SERVER = `http://${location.hostname}:8721`;
+
+// ---------------- anatomical circuit diagram ----------------
+// Every dot below sits at that neuron's REAL soma position in the malecns
+// dataset (front-view projection: left-right x dorsal-ventral), not an
+// arbitrary flowchart layout. Positions were precomputed once (see
+// project_brain_layout.R) into brain_layout.json.
+const svg = document.getElementById('circuit');
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+
+const GROUP_STYLE = {
+  lc_e:  { color: '#59d2ff', r: 1.6, baseOp: 0.35 },
+  dn_e:  { color: '#ff6b85', r: 3.2, baseOp: 0.55 },
+  in_e:  { color: '#9b91c4', r: 1.8, baseOp: 0.30 },
+  mn_e:  { color: '#ffcf5c', r: 1.6, baseOp: 0.30 },
+  mbon_e:{ color: '#ff6b85', r: 4.5, baseOp: 0.6 },
+  lc_a:  { color: '#5fe08a', r: 1.6, baseOp: 0.35 },
+  dn_a:  { color: '#a678ff', r: 3.2, baseOp: 0.55 },
+  in_a:  { color: '#9b91c4', r: 1.8, baseOp: 0.30 },
+  mn_a:  { color: '#ffcf5c', r: 1.6, baseOp: 0.30 },
+  mbon_a:{ color: '#5fe08a', r: 4.5, baseOp: 0.6 },
+  kc_e:  { color: '#ff9a6b', r: 1.4, baseOp: 0.28 },
+  kc_a:  { color: '#ff9a6b', r: 1.4, baseOp: 0.28 },
+};
+
+let layout = null, nodeEls = {}, viewCenterX = 230;
+async function loadLayout(){
+  const r = await fetch('brain_layout.json');
+  layout = await r.json();
+  svg.setAttribute('viewBox', `0 0 ${layout.viewport.w} ${layout.viewport.h}`);
+
+  // brain outline
+  const pts = layout.outline.map(p => `${p.x},${p.y}`).join(' ');
+  svg.appendChild(el('polygon', { points: pts, class: 'brain-outline' }));
+  viewCenterX = layout.viewport.w / 2;
+
+  // group dots
+  for (const g in GROUP_STYLE){
+    const style = GROUP_STYLE[g];
+    nodeEls[g] = [];
+    (layout.groups[g] || []).forEach(pt => {
+      const c = el('circle', { cx: pt.x, cy: pt.y, r: style.r, class: 'node', fill: style.color });
+      c.style.opacity = style.baseOp;
+      svg.appendChild(c);
+      nodeEls[g].push({ el: c, pt, style });
+    });
+  }
+  // legend
+  const legend = [
+    ['LC4/6 (looming, aversive)', '#59d2ff'], ['DN escape', '#ff6b85'], ['MBON11 brake', '#ff6b85'],
+    ['LC10 (pursuit, appetitive)', '#5fe08a'], ['DN pursuit', '#a678ff'], ['MBON01 drive', '#5fe08a'],
+    ['VNC interneuron/motor', '#9b91c4'], ['Kenyon cells', '#ff9a6b'],
+  ];
+  legend.forEach((row, i) => {
+    const col = i % 2, rowi = Math.floor(i/2);
+    const lx = 8 + col*225, ly = layout.viewport.h - 34 + rowi*10;
+    svg.appendChild(el('circle', { cx: lx, cy: ly, r: 2.5, class: 'legend-dot', fill: row[1] }));
+    const t = el('text', { x: lx+6, y: ly+3, class: 'legend' }); t.textContent = row[0];
+    svg.appendChild(t);
+  });
+}
+
+function setGroupActivity(g, v){
+  const k = Math.max(0, Math.min(1, v));
+  (nodeEls[g] || []).forEach(n => {
+    n.el.style.opacity = n.style.baseOp + k * (1 - n.style.baseOp);
+    n.el.setAttribute('r', n.style.r * (1 + k*0.8));
+  });
+}
+function setGroupActivityBySide(g, leftAmt, rightAmt){
+  (nodeEls[g] || []).forEach(n => {
+    const k = Math.max(0, Math.min(1, n.pt.x < viewCenterX ? leftAmt : rightAmt));
+    n.el.style.opacity = n.style.baseOp + k * (1 - n.style.baseOp);
+    n.el.setAttribute('r', n.style.r * (1 + k*0.8));
+  });
+}
+function setDnActivityByName(g, dict){
+  (nodeEls[g] || []).forEach(n => {
+    const k = Math.max(0, Math.min(1, (dict && dict[n.pt.name]) || 0));
+    n.el.style.opacity = n.style.baseOp + k * (1 - n.style.baseOp);
+    n.el.setAttribute('r', n.style.r * (1 + k*1.2));
+  });
+}
+
+// ---------------- polling ----------------
+async function pollBrain(){
+  try {
+    const r = await fetch(`${FLY_SERVER}/brain_state`);
+    const j = await r.json();
+    document.getElementById('status').textContent = 'live'; document.getElementById('status').className = 'live';
+    if (!layout) return;
+
+    const leftAmt_e = j.ex!==undefined ? Math.max(0, j.ex) * j.urgency : 0;   // real x grows rightward in voxel space
+    const rightAmt_e = j.ex!==undefined ? Math.max(0, -j.ex) * j.urgency : 0;
+    setGroupActivityBySide('lc_e', leftAmt_e, rightAmt_e);
+    setDnActivityByName('dn_e', j.d_dn_esc);
+    setGroupActivity('in_e', Math.min(1, Math.abs(j.esc_turn||0)/2));
+    setGroupActivity('mn_e', Math.min(1, Math.abs(j.esc_fwd||0)/2));
+    setGroupActivity('mbon_e', j.suppression||0);
+    setGroupActivity('kc_e', Math.min(1, (j.suppression||0)*1.3));
+
+    const leftAmt_a = j.gx!==undefined ? Math.max(0, j.gx) * j.gurgency : 0;
+    const rightAmt_a = j.gx!==undefined ? Math.max(0, -j.gx) * j.gurgency : 0;
+    setGroupActivityBySide('lc_a', leftAmt_a, rightAmt_a);
+    setDnActivityByName('dn_a', j.d_dn_app);
+    setGroupActivity('in_a', Math.min(1, Math.abs(j.app_turn||0)/2));
+    setGroupActivity('mn_a', Math.min(1, Math.abs(j.app_fwd||0)/2));
+    setGroupActivity('mbon_a', Math.min(1, (j.potentiation||0)*2));
+    setGroupActivity('kc_a', Math.min(1, (j.potentiation||0)*2));
+
+    document.getElementById('s-suppression').textContent = ((j.suppression||0)*100).toFixed(0)+'%';
+    document.getElementById('s-potentiation').textContent = ((j.potentiation||0)*100).toFixed(0)+'%';
+  } catch(e){
+    document.getElementById('status').textContent = 'offline'; document.getElementById('status').className = '';
+  }
+}
+loadLayout().then(() => setInterval(pollBrain, 150));
+
+// ---------------- learning chart (both circuits) ----------------
+const ctx = document.getElementById('chart').getContext('2d');
+async function pollLog(){
+  try {
+    const r = await fetch(`${FLY_SERVER}/learning_log`);
+    const rows = await r.json();
+    document.getElementById('s-esc-hits').textContent = rows.filter(r=>r.kind==='damage').length;
+    document.getElementById('s-app-hits').textContent = rows.filter(r=>r.kind==='reward').length;
+    drawChart(rows);
+  } catch(e){}
+}
+function drawChart(rows){
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle = '#332a5c'; ctx.lineWidth = 1;
+  for (let i=0;i<=4;i++){ const y = H - (i/4)*H; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  if (!rows.length) return;
+  const maxT = Math.max(1, rows[rows.length-1].t);
+  function plot(kind, color, scale){
+    const sub = rows.filter(r => r.kind === kind);
+    if (!sub.length) return;
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    sub.forEach((row, i) => {
+      const x = (row.t / maxT) * W, y = H - Math.min(1, row.value_after*scale) * H;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = color;
+    sub.forEach(row => {
+      const x = (row.t / maxT) * W, y = H - Math.min(1, row.value_after*scale) * H;
+      ctx.beginPath(); ctx.arc(x,y,2.5,0,7); ctx.fill();
+    });
+  }
+  plot('damage', '#ff6b85', 1);    // aversive brake (0-0.8 range)
+  plot('reward', '#5fe08a', 2);    // appetitive drive (scaled up for visibility)
+}
+setInterval(pollLog, 800);
+
+// ---------------- per-bin bars (escape + pursuit) ----------------
+const binNames = ['0°L','0°H','45°L','45°H','90°L','90°H','135°L','135°H','180°L','180°H','225°L','225°H','270°L','270°H','315°L','315°H','idle'];
+function makeBars(el){
+  binNames.forEach((n,i) => {
+    const b = document.createElement('div');
+    b.className = 'bar' + (i===16?' idle':'');
+    b.style.height = '2px'; b.title = n;
+    const s = document.createElement('span'); s.textContent = n;
+    b.appendChild(s);
+    el.appendChild(b);
+  });
+}
+const barsEsc = document.getElementById('binbars-esc'); barsEsc.className = 'binbars esc'; makeBars(barsEsc);
+const barsApp = document.getElementById('binbars-app'); barsApp.className = 'binbars app'; makeBars(barsApp);
+async function pollStats(){
+  try {
+    const r = await fetch(`${FLY_SERVER}/learning_stats`);
+    const j = await r.json();
+    j.remaining_fraction_esc.forEach((frac, i) => { barsEsc.children[i].style.height = Math.max(2, frac*60) + 'px'; });
+    j.potentiation_fraction_app.forEach((frac, i) => { barsApp.children[i].style.height = Math.max(2, Math.min(1,frac/3)*60) + 'px'; });
+  } catch(e){}
+}
+setInterval(pollStats, 800);
+pollBrain(); pollLog(); pollStats();
+</script>
+</body>
+</html>
