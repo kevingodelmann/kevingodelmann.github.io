@@ -1525,6 +1525,9 @@ function endRun(won){
             'So close to dawn.', 'Your lantern gutters out.']);
   $('overstats').innerHTML = runStatsHTML();
   $('againbtn').textContent = won ? 'PLAY AGAIN' : 'TRY AGAIN';
+  if (fly.enabled){
+    fetch(`${FLY_SERVER}/run_end?t=${G.t.toFixed(2)}&level=${G.player.level}&kills=${G.kills}`).catch(() => {});
+  }
   setTimeout(() => show('s-over', true), won ? 900 : 550);
   if (fly.enabled){
     // keep an unattended fly-controlled run going across deaths

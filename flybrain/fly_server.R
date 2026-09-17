@@ -2,6 +2,18 @@
 suppressMessages(library(httpuv))
 suppressMessages(library(jsonlite))
 
+# Real L/R synapse counts for a DN pair are rarely symmetric (e.g. DNp10_R's
+# total_out came out ~2.4x DNp10_L's in this reconstruction). Used directly
+# with side_sign, that anatomical magnitude imbalance becomes a fixed bias
+# that steers one direction almost regardless of input. The pair's combined
+# strength is real and worth keeping as an overall gain, but which side is
+# "stronger" is reconstruction noise, not signal — so both sides of a pair
+# are given the SAME magnitude (their sum). Direction then comes purely from
+# the input-driven differential between d_dn_L and d_dn_R (via ipsi_boost).
+normalize_by_side_pair <- function(total_out, type) {
+  ave(total_out, type, FUN = sum)
+}
+
 build_matrix <- function(e, rows, cols) {
   M <- matrix(0, nrow = length(rows), ncol = length(cols),
               dimnames = list(as.character(rows), as.character(cols)))
@@ -24,7 +36,7 @@ load_motor_circuit <- function(path) {
   W1 <- build_matrix(e1, dn_ids, in_ids)
   W2 <- build_matrix(e2, in_ids, mn_ids)
   T_dn_mn <- W1 %*% W2
-  total_out <- rowSums(T_dn_mn)
+  total_out <- normalize_by_side_pair(rowSums(T_dn_mn), c_$dn_meta$type)
   side_sign <- ifelse(c_$dn_meta$side == "R", 1, -1)
   is_ant  <- grepl("anterior|extensor|flight|^b[0-9] MN$", c_$motor_meta$type, ignore.case = TRUE)
   is_post <- grepl("posterior|flexor", c_$motor_meta$type, ignore.case = TRUE)
@@ -43,7 +55,7 @@ load_dn_circuit <- function(path) {
   W1 <- build_matrix(e1, dn_ids, in_ids)
   W2 <- build_matrix(e2, in_ids, mn_ids)
   T_dn_mn <- W1 %*% W2
-  total_out <- rowSums(T_dn_mn)
+  total_out <- normalize_by_side_pair(rowSums(T_dn_mn), c_$dn_meta$type)
   side_sign <- ifelse(c_$dn_meta$side == "R", 1, -1)
   is_ant  <- grepl("anterior|extensor|flight|^b[0-9] MN$", c_$motor_meta$type, ignore.case = TRUE)
   is_post <- grepl("posterior|flexor", c_$motor_meta$type, ignore.case = TRUE)
@@ -115,13 +127,20 @@ potentiation_of <- function(bin) {
   max(0, mean(sig / ceiling_app))   # unbounded-ish, scaled at use site
 }
 
-drive_from_lc <- function(circ, x, y, urgency, wander) {
+drive_from_lc <- function(circ, x, y, urgency, wander, turn_types = NULL) {
   d_lc <- numeric(length(circ$lc_ids))
   ipsi_boost <- 0.5 + 0.5 * (circ$lc_side_sign * sign(ifelse(x == 0, 0, -x)))
   d_lc[] <- wander + urgency * (0.6 + 0.4 * ipsi_boost)
   d_dn <- as.vector(d_lc %*% circ$W0)
   names(d_dn) <- paste0(circ$dn_meta$type, "_", circ$dn_meta$side)
-  turn <- sum(circ$side_sign * d_dn * circ$total_out)
+  # Some DN pairs in a given subgraph sample receive essentially zero drive
+  # on one side (a topological gap in that specific extracted subgraph, not
+  # fixable by magnitude normalization) — that turns into a one-sided bias
+  # that pushes a fixed direction regardless of input. turn_types lets the
+  # caller restrict steering to DN pairs verified to actually differentiate
+  # left vs right; all DNs still contribute to fwdback either way.
+  turn_mask <- if (is.null(turn_types)) rep(TRUE, length(d_dn)) else circ$dn_meta$type %in% turn_types
+  turn <- sum(circ$side_sign[turn_mask] * d_dn[turn_mask] * circ$total_out[turn_mask])
   fwdback <- sum(d_dn * circ$ap_out) + y * urgency * 0.5
   list(turn = turn, fwdback = fwdback, d_dn = d_dn)
 }
@@ -136,11 +155,14 @@ compute_move <- function(ex, ey, urgency, gx, gy, gurgency) {
   esc_turn <- esc_d$turn * (1 - suppression)
   esc_fwd  <- esc_d$fwdback * (1 - suppression)
 
-  app_d <- drive_from_lc(app, gx, gy, gurgency, wander = 0)
+  app_d <- drive_from_lc(app, gx, gy, gurgency, wander = 0, turn_types = "DNa10")
   potentiation <- potentiation_of(bin_a)
   pursuit_gain <- min(2.5, 1 + potentiation * 4)   # learned reward strengthens pursuit
-  app_turn <- app_d$turn * pursuit_gain
-  app_fwd  <- app_d$fwdback * pursuit_gain
+  # drive_from_lc's ipsi_boost convention was tuned for escape (move AWAY
+  # from ex/ey); pursuit needs the opposite sense (move TOWARD gx/gy), so
+  # its turn/fwd contribution is negated here.
+  app_turn <- -app_d$turn * pursuit_gain
+  app_fwd  <- -app_d$fwdback * pursuit_gain
 
   # Idle/exploratory walking (DNg13): a real DN->interneuron->motor pathway
   # driven by an internal rhythm rather than vision, standing in for
@@ -209,6 +231,25 @@ log_event <- function(kind, bin, hits, before, after) {
   write.table(row, LOG_PATH, sep = ",", row.names = FALSE, col.names = FALSE, append = TRUE)
 }
 
+RUN_LOG_PATH <- "C:/Users/kevin/Documents/Flybrain/run_log.csv"
+run_log <- data.frame(t = numeric(0), survival_s = numeric(0), level = integer(0), kills = integer(0),
+                       total_hits = integer(0), total_rewards = integer(0),
+                       mean_suppression = numeric(0), mean_potentiation = numeric(0))
+if (file.exists(RUN_LOG_PATH)) file.remove(RUN_LOG_PATH)
+write.csv(run_log, RUN_LOG_PATH, row.names = FALSE)
+
+log_run_end <- function(survival_s, level, kills) {
+  mean_supp <- mean(sapply(seq_len(N_BINS), suppression_of))
+  mean_pot  <- mean(sapply(seq_len(N_BINS), potentiation_of))
+  row <- data.frame(t = as.numeric(difftime(Sys.time(), t0, units = "secs")),
+                     survival_s = survival_s, level = level, kills = kills,
+                     total_hits = sum(hits_esc), total_rewards = sum(hits_app),
+                     mean_suppression = mean_supp, mean_potentiation = mean_pot)
+  run_log <<- rbind(run_log, row)
+  write.table(row, RUN_LOG_PATH, sep = ",", row.names = FALSE, col.names = FALSE, append = TRUE)
+  row
+}
+
 `%||%` <- function(a, b) if (is.null(a) || !nzchar(a)) b else a
 parse_qs <- function(qs) {
   if (!nzchar(qs)) return(list())
@@ -238,6 +279,12 @@ httpd_app <- list(
       mv <- compute_move(ex, ey, urgency, gx, gy, gurgency)
       return(list(status = 200L, headers = headers, body = toJSON(mv, auto_unbox = TRUE)))
     }
+    if (path == "/run_end") {
+      survival_s <- as.numeric(params$t %||% "0"); level <- as.integer(params$level %||% "1")
+      kills <- as.integer(params$kills %||% "0")
+      return(list(status = 200L, headers = headers, body = toJSON(log_run_end(survival_s, level, kills), auto_unbox = TRUE)))
+    }
+    if (path == "/run_log") return(list(status = 200L, headers = headers, body = toJSON(run_log, dataframe = "rows")))
     if (path == "/damage") return(list(status = 200L, headers = headers, body = toJSON(apply_damage(), auto_unbox = TRUE)))
     if (path == "/reward") return(list(status = 200L, headers = headers, body = toJSON(apply_reward(), auto_unbox = TRUE)))
     if (path == "/brain_state") return(list(status = 200L, headers = headers, body = toJSON(last_state, auto_unbox = TRUE)))

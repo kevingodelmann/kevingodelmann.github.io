@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flypong World Tour 3D</title>
+<style>
+  :root{ --bg:#0a0712; --panel:#15102a; --line:#332a5c; --text:#e8e3ff; --dim:#9b91c4; --acc:#a678ff; --good:#5fe08a; --gold:#ffcf5c; }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:#0a0712;color:var(--text);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden}
+  #wrap{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%}
+  #hud{position:absolute;inset:0;pointer-events:none;padding:10px}
+  #score{font-size:30px;font-weight:700;text-align:center;width:100%;position:absolute;top:8px;left:0;
+    text-shadow:0 2px 6px #000}
+  #round{font-size:12px;color:var(--dim);text-align:center;width:100%;position:absolute;top:44px;left:0;text-shadow:0 1px 4px #000}
+  #point-banner{position:absolute;top:70px;left:0;width:100%;text-align:center;font-size:15px;color:var(--gold);
+    font-weight:700;opacity:0;transition:opacity .3s;text-shadow:0 1px 4px #000}
+  #flybtn{pointer-events:auto;position:absolute;right:10px;bottom:10px;height:38px;padding:0 10px;
+    border-radius:10px;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font-size:13px;cursor:pointer}
+  #flybtn.active{background:var(--acc);color:#0a0712;border-color:var(--acc)}
+  #flyhud{position:absolute;right:10px;bottom:54px;font-size:11px;color:var(--dim);
+    background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 8px;display:none;white-space:nowrap}
+  #title{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:20px;
+    background:radial-gradient(ellipse at 50% 40%, rgba(21,16,42,.85), rgba(10,7,18,.95))}
+  #title h1{margin:0;font-size:28px}
+  #title button{font-size:18px;padding:10px 26px;border-radius:10px;background:var(--acc);border:0;color:#0a0712;cursor:pointer;font-weight:700;margin-top:8px}
+  #opponents{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;justify-content:center}
+  .opp-chip{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:20px;position:relative}
+  .opp-chip.done{opacity:.35}
+  .opp-chip.current{border-color:var(--gold);box-shadow:0 0 8px var(--gold)}
+  .opp-chip .lbl{position:absolute;bottom:-14px;left:0;right:0;font-size:8px;color:var(--dim)}
+  #trophy{font-size:56px;display:none}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="loading">Loading 3D scene…</div>
+  <canvas id="cv"></canvas>
+  <div id="hud">
+    <div id="score">0 : 0</div>
+    <div id="round"></div>
+    <div id="point-banner"></div>
+  </div>
+  <div id="title" style="display:none">
+    <h1>🏓 FLYPONG WORLD TOUR 3D</h1>
+    <p>Drag the mouse to move your paddle — closer to the table for control, further back for power. Win by 2, first to 11.</p>
+    <div id="opponents"></div>
+    <div id="trophy">🏆</div>
+    <button id="startbtn">SERVE</button>
+  </div>
+  <button id="flybtn" title="Toggle fly-brain control">🪰 OFF</button>
+  <div id="flyhud"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+/* ---------------------------- scene setup ---------------------------- */
+const cv = $('cv');
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0a1a);
+scene.fog = new THREE.Fog(0x0d0a1a, 6, 16);
+
+const camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 100);
+
+function resize(){
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+// table dimensions (real table tennis proportions, scaled to meters)
+const TABLE_L = 2.74, TABLE_W = 1.525, TABLE_H = 0.76;
+const NET_H = 0.15;
+
+const tableMat = new THREE.MeshPhysicalMaterial({ color: 0x155088, roughness: 0.28, metalness: 0.05, clearcoat: 0.35, clearcoatRoughness: 0.4 });
+const table = new THREE.Mesh(new THREE.BoxGeometry(TABLE_W, 0.05, TABLE_L), tableMat);
+table.position.y = TABLE_H - 0.025;
+table.castShadow = false; table.receiveShadow = true;
+scene.add(table);
+
+// apron (dark skirt around the tabletop edge, gives it real thickness/depth)
+const apronMat = new THREE.MeshStandardMaterial({ color: 0x0c2033, roughness: 0.6 });
+const apron = new THREE.Mesh(new THREE.BoxGeometry(TABLE_W + 0.03, 0.09, TABLE_L + 0.03), apronMat);
+apron.position.y = TABLE_H - 0.09;
+apron.receiveShadow = true; apron.castShadow = true;
+scene.add(apron);
+
+const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+function addLine(w,h,x,y,z){ const l = new THREE.Mesh(new THREE.BoxGeometry(w,0.002,h), lineMat); l.position.set(x,y,z); scene.add(l); }
+addLine(TABLE_W, 0.02, 0, TABLE_H+0.001, 0);
+addLine(0.02, TABLE_L, 0, TABLE_H+0.001, 0);
+addLine(0.02, TABLE_L, TABLE_W/2-0.01, TABLE_H+0.001, 0);
+addLine(0.02, TABLE_L, -TABLE_W/2+0.01, TABLE_H+0.001, 0);
+
+const net = new THREE.Mesh(
+  new THREE.PlaneGeometry(TABLE_W, NET_H),
+  new THREE.MeshStandardMaterial({ color: 0xf2f2f2, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
+);
+net.position.set(0, TABLE_H + NET_H/2, 0);
+scene.add(net);
+const postMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.6, roughness: 0.3 });
+[-1,1].forEach(s => {
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, NET_H + 0.03, 10), postMat);
+  post.position.set(s*TABLE_W/2, TABLE_H + NET_H/2, 0);
+  post.castShadow = true;
+  scene.add(post);
+});
+
+// legs
+const legMat = new THREE.MeshStandardMaterial({ color: 0x0d0a1c, roughness: 0.5 });
+[[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([sx,sz]) => {
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, TABLE_H, 0.06), legMat);
+  leg.position.set(sx*(TABLE_W/2-0.08), TABLE_H/2, sz*(TABLE_L/2-0.15));
+  leg.castShadow = true;
+  scene.add(leg);
+});
+
+// floor — procedural grid texture instead of flat color, reads as a real court
+const gridCanvas = document.createElement('canvas');
+gridCanvas.width = gridCanvas.height = 512;
+const gctx = gridCanvas.getContext('2d');
+gctx.fillStyle = '#100b1f'; gctx.fillRect(0,0,512,512);
+gctx.strokeStyle = 'rgba(166,120,255,0.14)'; gctx.lineWidth = 2;
+for (let i=0;i<=512;i+=32){ gctx.beginPath(); gctx.moveTo(i,0); gctx.lineTo(i,512); gctx.stroke();
+  gctx.beginPath(); gctx.moveTo(0,i); gctx.lineTo(512,i); gctx.stroke(); }
+const gridTex = new THREE.CanvasTexture(gridCanvas);
+gridTex.wrapS = gridTex.wrapT = THREE.RepeatWrapping; gridTex.repeat.set(10,10);
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(26, 26),
+  new THREE.MeshStandardMaterial({ map: gridTex, color: 0x8877bb, roughness: 0.95 })
+);
+floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
+scene.add(floor);
+
+// arena backdrop — soft walls so the scene doesn't feel like an empty void
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x140f26, roughness: 1, side: THREE.BackSide });
+const arena = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 6, 32, 1, true), wallMat);
+arena.position.y = 2.2;
+scene.add(arena);
+
+// overhead light fixtures (visible glowing panels above the table, like arena lighting)
+const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xfff4d6 });
+[-0.7, 0, 0.7].forEach(zOff => {
+  const fx = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.03, 0.16), fixtureMat);
+  fx.position.set(0, 3.1, zOff * TABLE_L * 0.7);
+  scene.add(fx);
+  const fl = new THREE.PointLight(0xfff0d0, 0.55, 6, 2);
+  fl.position.set(0, 3.0, zOff * TABLE_L * 0.7);
+  scene.add(fl);
+});
+
+// contact shadow helper (soft dark blob texture) — cheap fake ambient occlusion
+const shadowCanvas = document.createElement('canvas');
+shadowCanvas.width = shadowCanvas.height = 128;
+const sctx = shadowCanvas.getContext('2d');
+const grad = sctx.createRadialGradient(64,64,0,64,64,64);
+grad.addColorStop(0, 'rgba(0,0,0,0.45)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+sctx.fillStyle = grad; sctx.fillRect(0,0,128,128);
+const shadowTex = new THREE.CanvasTexture(shadowCanvas);
+function makeContactShadow(size){
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite:false }));
+  m.rotation.x = -Math.PI/2;
+  scene.add(m);
+  return m;
+}
+const ballShadow = makeContactShadow(0.12);
+const playerShadow = makeContactShadow(0.22);
+const oppShadow = makeContactShadow(0.22);
+
+// lighting
+scene.add(new THREE.AmbientLight(0x6a5f96, 0.55));
+const key = new THREE.DirectionalLight(0xfff6e8, 1.3);
+key.position.set(2, 5, 2); key.castShadow = true;
+key.shadow.mapSize.set(1536,1536);
+key.shadow.camera.near = 0.5; key.shadow.camera.far = 12;
+key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+key.shadow.camera.top = 2.5; key.shadow.camera.bottom = -2.5;
+scene.add(key);
+const rim = new THREE.PointLight(0xa678ff, 0.5, 12);
+rim.position.set(0, 2.5, -2);
+scene.add(rim);
+const fillLight = new THREE.PointLight(0x59d2ff, 0.3, 10);
+fillLight.position.set(0, 1.5, 2.5);
+scene.add(fillLight);
+
+// paddles — classic red-front / black-back rubber with a wooden rim.
+// Previously the handle pointed straight along Z, directly behind the
+// blade from the camera's point of view — completely hidden, so the whole
+// paddle just read as a flat colored disc ("looks like a ball") with no
+// recognizable paddle silhouette. The handle now hangs below the blade
+// (along Y) where it's actually visible, and the blade is tilted slightly
+// so its rim/edge reads as a disc with real thickness instead of a flat
+// circle dead-on to the camera.
+function makePaddle(frontColor){
+  const g = new THREE.Group();
+  const blade = new THREE.Group();
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.016, 28),
+    new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.6 }));
+  rim.rotation.x = Math.PI/2; rim.castShadow = true;
+  const front = new THREE.Mesh(new THREE.CylinderGeometry(0.083, 0.083, 0.004, 28),
+    new THREE.MeshPhysicalMaterial({ color: frontColor, roughness: 0.55, clearcoat: 0.5, clearcoatRoughness: 0.3 }));
+  front.rotation.x = Math.PI/2; front.position.z = 0.007;
+  const back = new THREE.Mesh(new THREE.CylinderGeometry(0.083, 0.083, 0.004, 28),
+    new THREE.MeshPhysicalMaterial({ color: 0x0c0c0c, roughness: 0.55, clearcoat: 0.5, clearcoatRoughness: 0.3 }));
+  back.rotation.x = Math.PI/2; back.position.z = -0.007;
+  blade.add(rim); blade.add(front); blade.add(back);
+  blade.position.y = 0.07;
+  blade.rotation.x = 0.3;   // slight tilt so the disc's edge/thickness is visible, not perfectly flat-on
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.02, 0.11, 10),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.7 }));
+  handle.position.y = 0;   // hangs straight down, clearly visible from any angle
+  g.add(blade); g.add(handle);
+  return g;
+}
+const playerPaddle = makePaddle(0xd6362f);
+const oppPaddle = makePaddle(0xd6362f);
+scene.add(playerPaddle); scene.add(oppPaddle);
+
+// ball — matte celluloid look, faint warm glow so it stays readable against the dark arena
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(0.02, 24, 24),
+  new THREE.MeshPhysicalMaterial({ color: 0xfff7e6, emissive: 0x33261a, emissiveIntensity: 0.4, roughness: 0.35, clearcoat: 0.6 })
+);
+ball.castShadow = true;
+scene.add(ball);
+
+// ball trail (simple fading spheres)
+const trailMeshes = [];
+for (let i=0;i<8;i++){
+  const t = new THREE.Mesh(new THREE.SphereGeometry(0.016, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }));
+  scene.add(t); trailMeshes.push(t);
+}
+
+// hit particles
+const particleGeo = new THREE.SphereGeometry(0.006, 6, 6);
+const particles = [];
+function spawnHit(pos, color){
+  for (let i=0;i<10;i++){
+    const m = new THREE.Mesh(particleGeo, new THREE.MeshBasicMaterial({ color }));
+    m.position.copy(pos);
+    scene.add(m);
+    particles.push({ mesh:m, vx:(Math.random()-0.5)*1.6, vy:Math.random()*1.4, vz:(Math.random()-0.5)*1.6, life:0.4 });
+  }
+}
+function updateParticles(dt){
+  for (let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.mesh.position.x += p.vx*dt; p.mesh.position.y += p.vy*dt; p.mesh.position.z += p.vz*dt;
+    p.vy -= 4*dt;
+    p.life -= dt;
+    p.mesh.material.opacity = Math.max(0, p.life/0.4);
+    p.mesh.material.transparent = true;
+    if (p.life <= 0){ scene.remove(p.mesh); particles.splice(i,1); }
+  }
+}
+
+/* ---------------------------- tournament / match state ---------------------------- */
+// Real ping-pong balls travel 10+ m/s (see tomgoddard/PingPang's notes on
+// VR tracking struggling to keep up with real rally speeds) — our earlier
+// 1.9-3.6 range was much too slow, part of why the physics felt floaty.
+// Scaled up for a snappier feel without going fully to real-world speed
+// (which a simplified lateral-tracking AI/paddle couldn't reasonably keep
+// up with).
+const TOUR = [
+  { flag:'🇯🇵', name:'Japan',   sp: 2.3, reaction: 55, err: 0.09 },
+  { flag:'🇧🇷', name:'Brazil',  sp: 2.6, reaction: 46, err: 0.075 },
+  { flag:'🇫🇷', name:'France',  sp: 3.0, reaction: 38, err: 0.06 },
+  { flag:'🇩🇪', name:'Germany', sp: 3.3, reaction: 30, err: 0.045 },
+  { flag:'🇰🇷', name:'S.Korea', sp: 3.8, reaction: 22, err: 0.03 },
+  { flag:'🇨🇳', name:'China',   sp: 4.3, reaction: 15, err: 0.015 },
+];
+
+const HALF_W = TABLE_W/2 - 0.09;
+const PLAYER_Z = TABLE_L/2 + 0.12, OPP_Z = -TABLE_L/2 - 0.12;
+
+const G = {
+  mode: 'title', playerScore: 0, oppScore: 0, round: 0, wonTour: false, pointScored: false,
+  gamesWon: { player: 0, opp: 0 },   // ITTF matches are best-of-5 (or 7) games, not a single game to 11
+  rallyBounces: 0,   // bounces on the current side since the last hit — enforces "must bounce once before returning" (no volleys) and "double bounce = point"
+  player: { x: 0, depth: 0.35, w: HALF_W, lastX: 0, vx: 0 },
+  opp:    { x: 0, targetX: 0, targetAge: 0 },
+  ball: { x:0, y:TABLE_H+0.3, z:0, vx:0, vy:0, vz:0 },
+  trailHist: [],
+};
+const GAMES_TO_WIN_MATCH = 3;   // best-of-5
+
+const GRAVITY = 9.8;  // real gravity, not an arbitrary tuned constant
+
+// Solves the actual projectile equation for the vy needed to be exactly
+// `targetHeight` above the table after travelling `dist` at horizontal
+// speed `speedAbs`, instead of guessing a fixed vy that only happens to
+// work for one specific hit distance. This is what net-clearing should
+// have been driven by from the start — a fixed constant only "feels right"
+// for the one case it was tuned against and breaks for every other.
+// `startHeight` is the ball's height above the table AT THE MOMENT OF
+// LAUNCH (e.g. ~0.28 for the serve, ~0.1-0.3 for a paddle hit) — omitting
+// this (implicitly assuming launch from table level) made every shot fly
+// `startHeight` higher than intended for its whole flight, so it never
+// actually bounced by the intended distance (it just kept floating).
+function arcVy(dist, speedAbs, targetHeight, startHeight = 0){
+  const t = Math.max(0.3, dist) / Math.max(0.3, speedAbs);
+  // No lower clamp beyond a small negative allowance: when startHeight is
+  // already above targetHeight over a short distance, the correct vy can
+  // legitimately be small or negative (the ball is meant to be already
+  // descending, not tossed further up first). A hard floor of 1.0 here
+  // previously forced an unwanted extra rise, delaying the fall long
+  // enough that the ball never actually bounced by the intended distance.
+  return Math.max(-3.0, Math.min(5.8, (targetHeight - startHeight + 0.5*GRAVITY*t*t) / t));
+}
+
+function resetBall(dir){
+  G.pointScored = false;
+  G.rallyBounces = 0;
+  G.ball.x = 0; G.ball.y = TABLE_H + 0.28; G.ball.z = 0;
+  const ang = (Math.random()*0.5 - 0.25);
+  const speed = 3.0 + G.round * 0.22;
+  G.ball.vx = Math.sin(ang) * speed * 0.5;
+  G.ball.vz = Math.cos(ang) * speed * dir;
+  // Serve must bounce with room to spare BEFORE reaching the receiver's
+  // hit-zone (ITTF: the receiver must let it bounce once before returning
+  // — previously this landed right at the baseline, still airborne when
+  // it reached the hit-zone, which made the no-volley rule foul almost
+  // every single serve).
+  G.ball.vy = arcVy(TABLE_L/2 * 0.6, speed, 0, 0.28);
+  G.trailHist = [];
+}
+function renderOpponentChips(){
+  $('opponents').innerHTML = TOUR.map((o,i) => {
+    const cls = i < G.round ? 'done' : (i === G.round ? 'current' : '');
+    return `<div class="opp-chip ${cls}">${o.flag}<div class="lbl">${o.name}</div></div>`;
+  }).join('');
+}
+function updateRoundHUD(){
+  const o = TOUR[Math.min(G.round, TOUR.length-1)];
+  $('round').textContent = `Round ${G.round+1}/${TOUR.length} vs ${o.flag} ${o.name} · Games ${G.gamesWon.player}-${G.gamesWon.opp} (best of 5)`;
+}
+// Starts a brand new match against the current (or next) opponent —
+// resets games won. ITTF matches are best-of-5 (or 7) games, not a single
+// game to 11, so this is the "new match" entry point; startGame() below
+// is used between games within the same match.
+function startRun(){
+  if (G.wonTour || G.round >= TOUR.length) { G.round = 0; G.wonTour = false; }
+  G.gamesWon = { player: 0, opp: 0 };
+  startGame();
+}
+let lastKnownScores = { p: 0, o: 0 };
+function startGame(){
+  G.player.x = 0; G.player.depth = 0.35; G.opp.x = 0;
+  G.playerScore = 0; G.oppScore = 0;
+  lastKnownScores = { p: 0, o: 0 };
+  resetBall(1);
+  G.mode = 'playing';
+  $('title').style.display = 'none';
+  $('trophy').style.display = 'none';
+  last = performance.now();
+  updateRoundHUD();
+}
+$('startbtn').addEventListener('click', startRun);
+renderOpponentChips();
+
+let mouseX = null, mouseY = null;
+cv.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+cv.addEventListener('touchmove', e => { mouseX = e.touches[0].clientX; mouseY = e.touches[0].clientY; e.preventDefault(); }, {passive:false});
+
+/* ------------------------- fly-brain bridge -------------------------
+   Reuses the pursuit (appetitive) circuit built for Nightfall Survivors'
+   XP-seeking: LC10 -> DNa10 -> VNC interneurons -> motor neurons.
+   x output drives lateral paddle position, y output drives depth
+   (closer to the table for control, further back for power/reach),
+   mirroring the real game's near/far positioning mechanic.
+   Server: fly_server_v4.R on :8721. */
+const FLY_SERVER = `http://${location.hostname}:8721`;
+const fly = { enabled: false, x: 0, y: 0, busy: false, failCount: 0 };
+
+function flyPoll(){
+  if (!fly.enabled || fly.busy || G.mode !== 'playing') return;
+  const p = G.player, b = G.ball;
+  // Only lateral (x) tracking is routed through the connectome — that's the
+  // circuit's verified, correctly-signed steering signal. Depth is handled
+  // separately in updatePlayer via a direct heuristic (see note there):
+  // the pursuit circuit's y-channel doesn't carry a usable "near/far" signal
+  // for this geometry (it's derived from a distance-to-baseline gap that's
+  // almost always positive during normal play, so it never meaningfully
+  // varies) — routing depth through it was effectively dead code.
+  const dx = b.x - p.x;
+  const norm = Math.max(0.05, Math.abs(dx));
+  let gx = dx / norm;
+  if (!Number.isFinite(gx)) return;
+  fly.busy = true;
+  fetch(`${FLY_SERVER}/move?ex=0&ey=0&urgency=0&gx=${gx.toFixed(3)}&gy=0&gurgency=1`)
+    .then(r => r.json())
+    .then(j => {
+      fly.x = Number.isFinite(j.x) ? j.x : 0;
+      fly.failCount = 0; fly.busy = false;
+      $('flyhud').textContent = `pursuit drive tracking ball · appetitive: ${((j.potentiation||0)*100).toFixed(0)}%`;
+    })
+    .catch(() => {
+      fly.busy = false; fly.failCount++;
+      if (fly.failCount > 5){ fly.enabled = false; flySetButton(); }
+    });
+}
+setInterval(flyPoll, 30);
+function flySetButton(){
+  $('flybtn').textContent = fly.enabled ? '🪰 ON' : '🪰 OFF';
+  $('flybtn').classList.toggle('active', fly.enabled);
+  $('flyhud').style.display = fly.enabled ? 'block' : 'none';
+}
+$('flybtn').addEventListener('click', () => { fly.enabled = !fly.enabled; flySetButton(); });
+
+function updatePlayer(dt){
+  const p = G.player, b = G.ball;
+  const sp = 4.2, spDepth = 1.7;
+  p.lastX = p.x;
+  if (fly.enabled){
+    p.x += fly.x * sp * dt;
+    // Depth heuristic (not connectome-driven, see flyPoll's note): stay
+    // back while the ball is still approaching, for reach and reaction
+    // time, then step forward as it nears the baseline for a controlled
+    // hit — mirrors real player footwork on an incoming shot.
+    const dz = Math.max(0, PLAYER_Z - b.z);
+    const targetDepth = 0.15 + Math.min(1, dz / TABLE_L) * 0.45;
+    p.depth += Math.max(-1, Math.min(1, (targetDepth - p.depth) / 0.3)) * spDepth * dt;
+  } else if (mouseX !== null){
+    const targetX = ((mouseX / innerWidth) - 0.5) * TABLE_W * 1.4;
+    const targetDepth = 0.18 + Math.max(0, Math.min(1, 1 - mouseY/innerHeight)) * 0.5;
+    p.x += Math.max(-1, Math.min(1, (targetX - p.x) / 0.3)) * sp * dt;
+    p.depth += Math.max(-1, Math.min(1, (targetDepth - p.depth) / 0.3)) * spDepth * dt;
+  }
+  p.x = Math.max(-p.w, Math.min(p.w, p.x));
+  p.depth = Math.max(0.1, Math.min(0.7, p.depth));
+  p.vx = (p.x - p.lastX) / Math.max(dt, 0.001);
+}
+
+function updateOpp(dt){
+  const o = G.opp, b = G.ball, cfg = TOUR[Math.min(G.round, TOUR.length-1)];
+  o.targetAge -= dt*1000;
+  if (o.targetAge <= 0){
+    o.targetAge = cfg.reaction;
+    o.targetX = b.x + (Math.random()-0.5) * cfg.err * 4;
+  }
+  o.x += Math.max(-1, Math.min(1, (o.targetX - o.x) / 0.3)) * cfg.sp * dt;
+  o.x = Math.max(-HALF_W, Math.min(HALF_W, o.x));
+}
+
+function updateBall(dt){
+  const b = G.ball;
+  G.trailHist.push({x:b.x,y:b.y,z:b.z}); if (G.trailHist.length>8) G.trailHist.shift();
+
+  b.vy -= GRAVITY * dt;
+  b.x += b.vx*dt; b.y += b.vy*dt; b.z += b.vz*dt;
+
+  // Real table tennis has no side walls — a ball that goes too wide is a
+  // fault, not a bounce. The previous bounce boundary (TABLE_W*0.62 ≈
+  // 0.95m) was wider than the actual table (half-width 0.76m) and nothing
+  // is rendered there, so the ball appeared to bounce off an invisible
+  // wall in mid-air past the table's real edge.
+  if (!G.pointScored && Math.abs(b.x) > TABLE_W/2 + 0.25){
+    G.pointScored = true;
+    if (b.z > 0) G.oppScore++; else G.playerScore++;   // whoever's side it went wide on hit it out
+    afterPoint();
+    return;
+  }
+
+  // table bounce (0.85 restitution is realistic for a table tennis ball)
+  if (b.y <= TABLE_H + 0.02 && b.y > TABLE_H - 0.3){
+    if (b.vy < 0){
+      b.y = TABLE_H + 0.02; b.vy *= -0.85;
+      if (Math.abs(b.vy) < 0.5) b.vy = 0.9;
+      // ITTF rule: if a side's own return bounces twice on their side
+      // before being hit, the OTHER side wins the point (they failed to
+      // return it in time). This was previously unenforced — the ball
+      // could just keep bouncing indefinitely with no rule consequence.
+      G.rallyBounces++;
+      if (!G.pointScored && G.rallyBounces >= 2){
+        G.pointScored = true;
+        if (b.z > 0) G.oppScore++; else G.playerScore++;
+        afterPoint();
+        return;
+      }
+    }
+  }
+  // Hitting the net is a fault, not a bounce — resolve it immediately as a
+  // point instead of damping vz (the previous "bounce" repeatedly shrank
+  // vz toward zero without ever reaching exactly 0, so the ball got stuck
+  // oscillating at the net forever and the match never progressed).
+  if (!G.pointScored && Math.abs(b.z) < 0.03 && b.y < TABLE_H + NET_H && b.y > TABLE_H){
+    G.pointScored = true;
+    spawnHit(new THREE.Vector3(b.x, b.y, 0), 0xf2f2f2);   // visible net-hit feedback instead of silently vanishing
+    if (b.vz > 0) G.playerScore++; else G.oppScore++;   // ball was heading toward whoever didn't hit the net
+    afterPoint();
+    return;
+  }
+
+  const p = G.player, o = G.opp;
+  const pz = PLAYER_Z - (0.35 - p.depth), oz = OPP_Z;
+  // vy on every return is computed from the actual post-hit horizontal
+  // speed and distance to the net (arcVy), not a fixed guess — a constant
+  // only clears the net for the one specific distance/speed it happened to
+  // be tuned against, and breaks (falls short, or floats unrealistically
+  // high) for every other depth position or rally speed.
+  // ITTF rule: volleying (hitting before the ball bounces on your own
+  // side) is illegal — the opponent wins the point. Previously any ball
+  // in the hit-zone was returned regardless of whether it had bounced.
+  if (b.vz > 0 && b.z > pz - 0.12 && b.z < pz + 0.12 && Math.abs(b.x - p.x) < 0.13 && b.y < TABLE_H + 0.35){
+    if (G.rallyBounces < 1){
+      if (!G.pointScored){ G.pointScored = true; G.oppScore++; afterPoint(); return; }
+    } else {
+      b.vz *= -1; b.vz -= 0.4;
+      b.vx += (b.x - p.x) * 3.4 + p.vx * 0.22;
+      // Land (bounce) at 1.6x the distance to the net — comfortably past
+      // it (guarantees net clearance too) but well before the opponent's
+      // hit-zone (~2x that distance), so the return has bounced on their
+      // side by the time it gets there, same reasoning as the serve fix.
+      b.vy = arcVy(Math.abs(b.z) * 1.6, Math.abs(b.vz), 0, b.y - TABLE_H);
+      G.rallyBounces = 0;
+      spawnHit(new THREE.Vector3(b.x, b.y, b.z), 0xffcf5c);
+    }
+  }
+  if (b.vz < 0 && b.z < oz + 0.12 && b.z > oz - 0.12 && Math.abs(b.x - o.x) < 0.13 && b.y < TABLE_H + 0.35){
+    if (G.rallyBounces < 1){
+      if (!G.pointScored){ G.pointScored = true; G.playerScore++; afterPoint(); return; }
+    } else {
+      b.vz *= -1; b.vz += 0.4;
+      b.vx += (b.x - o.x) * 3.0;
+      b.vy = arcVy(Math.abs(b.z) * 1.6, Math.abs(b.vz), 0, b.y - TABLE_H);
+      G.rallyBounces = 0;
+      spawnHit(new THREE.Vector3(b.x, b.y, b.z), 0x59d2ff);
+    }
+  }
+
+  // Only score once per rally — the ball can satisfy more than one of these
+  // conditions in the same frame (e.g. past the baseline AND below table
+  // height), which previously double-counted a single point.
+  if (G.pointScored) return;
+  if (b.z > PLAYER_Z + 0.4){ G.pointScored = true; G.oppScore++; afterPoint(); return; }
+  if (b.z < OPP_Z - 0.4){ G.pointScored = true; G.playerScore++; afterPoint(); return; }
+  if (b.y < TABLE_H - 0.5){
+    // Ball died (net/off-table) without crossing either baseline — award
+    // the point to whoever's side it died on, not unconditionally to the
+    // opponent (that was awarding the player's own winning shots to the
+    // opponent whenever they landed short on the opponent's half).
+    G.pointScored = true;
+    if (b.z > 0) G.oppScore++; else G.playerScore++;
+    afterPoint();
+  }
+}
+
+// A single GAME (to 11, win by 2) — ITTF rule.
+function gameOver(){
+  const p = G.playerScore, o = G.oppScore;
+  if (p >= 11 && p - o >= 2) return 'player';
+  if (o >= 11 && o - p >= 2) return 'opp';
+  return null;
+}
+function afterPoint(){
+  $('score').textContent = `${G.playerScore} : ${G.oppScore}`;
+  // Real reward signal for the appetitive/pursuit circuit's dopamine-gated
+  // learning: winning a point (successful ball tracking) is the closest
+  // equivalent here to Nightfall Survivors' XP pickup. Without this the
+  // learning dashboard would just show stale state from that other game.
+  if (fly.enabled && G.playerScore > lastKnownScores.p){
+    fetch(`${FLY_SERVER}/reward`).catch(() => {});
+  }
+  lastKnownScores = { p: G.playerScore, o: G.oppScore };
+  const gWinner = gameOver();
+  if (gWinner){
+    G.gamesWon[gWinner]++;
+    // A MATCH is best-of-5 games (first to 3), not a single game to 11 —
+    // ITTF rule. Winning one game to 11 used to end the whole round here.
+    if (G.gamesWon[gWinner] >= GAMES_TO_WIN_MATCH){
+      G.mode = 'title';
+      $('title').style.display = 'flex';
+      renderOpponentChips();
+      if (gWinner === 'player'){
+        G.round++;
+        if (G.round >= TOUR.length){
+          G.wonTour = true;
+          $('trophy').style.display = 'block';
+          $('title').querySelector('p').textContent = 'World Tour champion! Every country beaten.';
+        } else {
+          $('title').querySelector('p').textContent = `Match won ${G.gamesWon.player}-${G.gamesWon.opp}! Next up: ${TOUR[G.round].flag} ${TOUR[G.round].name}.`;
+        }
+      } else {
+        $('title').querySelector('p').textContent = `Lost the match ${G.gamesWon.player}-${G.gamesWon.opp} to ${TOUR[G.round].flag} ${TOUR[G.round].name}. Try again?`;
+      }
+      if (fly.enabled) setTimeout(startRun, 1800);
+      return;
+    }
+    // Match continues — same opponent, next game, games-won carries over.
+    // Freeze physics updates during the pause (mode!=='playing') so the
+    // ball doesn't keep drifting/bouncing for the ~2s before the next game.
+    G.mode = 'betweenGames';
+    showBanner(`GAME TO ${gWinner === 'player' ? 'YOU' : 'OPPONENT'} — ${G.gamesWon.player}-${G.gamesWon.opp} in the match`);
+    if (fly.enabled) setTimeout(startGame, 1600); else setTimeout(startGame, 2200);
+    return;
+  }
+  if ((G.playerScore >= 10 && G.oppScore >= 9) || (G.oppScore >= 10 && G.playerScore >= 9)){
+    showBanner(G.playerScore > G.oppScore ? 'GAME POINT — YOU' : 'GAME POINT — OPPONENT');
+  }
+  resetBall(G.playerScore > G.oppScore ? -1 : 1);
+}
+function showBanner(text){
+  const b = $('point-banner'); b.textContent = text; b.style.opacity = 1;
+  setTimeout(() => b.style.opacity = 0, 1400);
+}
+
+/* ---------------------------- render / loop ---------------------------- */
+function syncScene(){
+  playerPaddle.position.set(G.player.x, TABLE_H + 0.12, PLAYER_Z - (0.35 - G.player.depth));
+  playerPaddle.rotation.y = Math.PI;
+  oppPaddle.position.set(G.opp.x, TABLE_H + 0.12, OPP_Z);
+
+  ball.position.set(G.ball.x, G.ball.y, G.ball.z);
+  ball.rotation.x += 0.3; ball.rotation.y += 0.2;
+
+  ballShadow.position.set(G.ball.x, TABLE_H + 0.003, G.ball.z);
+  ballShadow.material.opacity = Math.max(0.1, 1 - (G.ball.y - TABLE_H) * 1.5);
+  playerShadow.position.set(playerPaddle.position.x, TABLE_H + 0.003, playerPaddle.position.z);
+  oppShadow.position.set(oppPaddle.position.x, TABLE_H + 0.003, oppPaddle.position.z);
+
+  for (let i=0;i<trailMeshes.length;i++){
+    const h = G.trailHist[G.trailHist.length - 1 - i];
+    if (h){ trailMeshes[i].position.set(h.x,h.y,h.z); trailMeshes[i].material.opacity = 0.25 * (1 - i/trailMeshes.length); }
+    else trailMeshes[i].material.opacity = 0;
+  }
+
+  // camera follows behind the player's paddle, angled down the table
+  const camZ = PLAYER_Z + 0.85 + G.player.depth*0.4;
+  const camY = TABLE_H + 0.75;
+  camera.position.set(G.player.x * 0.4, camY, camZ);
+  camera.lookAt(G.player.x * 0.15, TABLE_H + 0.15, -0.3);
+}
+
+let last = performance.now();
+function frame(now){
+  now = now || performance.now();
+  let dt = Math.min((now - last) / 1000, 0.033);
+  last = now;
+  if (G.mode === 'playing'){
+    updatePlayer(dt); updateOpp(dt); updateBall(dt);
+  }
+  updateParticles(dt);
+  syncScene();
+  renderer.render(scene, camera);
+}
+setInterval(frame, 16);
+$('loading').style.display = 'none';
+$('title').style.display = 'flex';
+</script>
+</body>
+</html>
