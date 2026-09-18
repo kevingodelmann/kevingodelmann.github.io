@@ -490,7 +490,9 @@ function animatePaddle(group, pad, facing, dt) {
   group.position.set(pad.x, pad.y - 0.075, pad.z);
   // blade closes over the ball through the stroke, and the whole paddle
   // follows through forward — so a hit reads as a swing, not a teleport
-  group.rotation.y = facing > 0 ? Math.PI : 0;
+  // Red rubber toward the camera on the near bat: the black face filled the
+  // foreground as a dark blob and hid the bat's shape entirely.
+  group.rotation.y = facing > 0 ? 0 : Math.PI;
   group.rotation.x = -0.25 - phase * 0.55;
   group.position.z -= facing * phase * 0.10;
   group.position.y += phase * 0.045;

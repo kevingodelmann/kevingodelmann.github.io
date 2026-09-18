@@ -17,6 +17,10 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+
+// RectAreaLight silently misbehaves unless its BRDF lookup tables are loaded.
+RectAreaLightUniformsLib.init();
 
 import { TABLE, BALL_RADIUS, HALF_WIDTH, HALF_LENGTH } from './physics.js';
 
@@ -83,22 +87,107 @@ function makeBallTexture() {
   return tex;
 }
 
+/**
+ * Sports-hall floor: a poured rubber surface with a fine speckle. Replaces the
+ * purple grid, which read as "tech demo" rather than as a room, and gave the
+ * eye no sense of scale.
+ */
 function makeFloorTexture() {
   const s = 512;
   const c = document.createElement('canvas');
   c.width = c.height = s;
   const g = c.getContext('2d');
-  g.fillStyle = '#0d0a18';
+  g.fillStyle = '#211a2e';
   g.fillRect(0, 0, s, s);
-  g.strokeStyle = 'rgba(150,120,220,0.10)';
-  g.lineWidth = 2;
-  for (let i = 0; i <= s; i += 64) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i, s); g.stroke();
-    g.beginPath(); g.moveTo(0, i); g.lineTo(s, i); g.stroke();
+  // speckle, so grazing light has something to catch and the floor doesn't
+  // flatten into a single dead tone
+  for (let i = 0; i < 9000; i++) {
+    const a = Math.random() * 0.06;
+    g.fillStyle = Math.random() < 0.5 ? `rgba(255,245,230,${a})` : `rgba(90,70,140,${a * 1.6})`;
+    g.fillRect(Math.random() * s, Math.random() * s, 2, 2);
   }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(8, 8);
+  tex.repeat.set(10, 10);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** The blue playing-area mat the table stands on, with its white border. */
+function makeCourtTexture() {
+  const w = 512, h = 1024;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.fillStyle = '#123a5e';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 14000; i++) {
+    g.fillStyle = `rgba(255,255,255,${Math.random() * 0.03})`;
+    g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+  }
+  g.strokeStyle = 'rgba(235,240,255,0.55)';
+  g.lineWidth = 6;
+  g.strokeRect(12, 12, w - 24, h - 24);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Perimeter barrier boards, the ones that carry sponsor text in a real hall. */
+function makeBoardTexture(label) {
+  const w = 1024, h = 128;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0d1b33';
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = 'rgba(120,160,255,0.10)';
+  g.fillRect(0, h - 10, w, 10);
+  g.font = 'bold 54px ui-monospace, monospace';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  for (let i = 0; i < 3; i++) {
+    g.fillStyle = i % 2 ? 'rgba(167,120,255,0.85)' : 'rgba(210,225,255,0.75)';
+    g.fillText(label, (i + 0.5) * (w / 3), h / 2);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** The arena's big screen at the far end of the hall. */
+function makeScreenTexture() {
+  const w = 1024, h = 512;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#111a3a');
+  grad.addColorStop(1, '#0a0f2a');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, h);
+
+  g.strokeStyle = 'rgba(120,150,255,0.18)';
+  g.lineWidth = 3;
+  g.strokeRect(24, 24, w - 48, h - 48);
+
+  g.textAlign = 'center';
+  g.fillStyle = '#8fa4cc';
+  g.font = 'bold 82px ui-monospace, monospace';
+  g.fillText('FLYPONG', w / 2, 170);
+  g.font = 'bold 46px ui-monospace, monospace';
+  g.fillStyle = '#7a5bb5';
+  g.fillText('WORLD TOUR', w / 2, 240);
+  g.font = '34px ui-monospace, monospace';
+  g.fillStyle = 'rgba(190,205,240,0.7)';
+  g.fillText('connectome-driven', w / 2, 330);
+
+  // a suggestion of a live feed strip along the bottom
+  for (let i = 0; i < 16; i++) {
+    g.fillStyle = `rgba(120,150,255,${0.05 + (i % 3) * 0.05})`;
+    g.fillRect(40 + i * 58, h - 110, 46, 60);
+  }
+  const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
@@ -142,11 +231,14 @@ export function createScene(canvas) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.25;
+  renderer.toneMappingExposure = 0.92;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x07050f);
-  scene.fog = new THREE.FogExp2(0x07050f, 0.055);
+  scene.background = new THREE.Color(0x161133);
+  // Light fog only. At 0.055 the arena walls 11m out were ~30% fogged into a
+  // background that was itself near-black, which is why everything above the
+  // table read as an empty void.
+  scene.fog = new THREE.FogExp2(0x161133, 0.020);
   scene.environment = makeEnvironment(renderer);
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 100);
@@ -211,26 +303,158 @@ export function createScene(canvas) {
     scene.add(post);
   }
 
-  /* ---- floor & arena ---- */
+  /* ---- floor & arena ----
+   *
+   * Previously this was a black cylinder in near-black fog, so everything above
+   * the table was an empty void: the table had no room to sit in, nothing to
+   * reflect, and the eye had no scale reference. This builds an actual hall.
+   */
+  const COURT_W = 6.2, COURT_L = 11.0;   // the marked playing area around the table
+
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(40, 40),
-    new THREE.MeshStandardMaterial({ map: makeFloorTexture(), color: 0x8a7ab8, roughness: 0.88, metalness: 0.05, envMapIntensity: 0.35 }),
+    new THREE.PlaneGeometry(60, 60),
+    new THREE.MeshStandardMaterial({
+      map: makeFloorTexture(), roughness: 0.72, metalness: 0.05, envMapIntensity: 0.5,
+    }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  const arena = new THREE.Mesh(
-    new THREE.CylinderGeometry(11, 11, 8, 40, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0x0f0b1e, roughness: 1, side: THREE.BackSide }),
+  const court = new THREE.Mesh(
+    new THREE.PlaneGeometry(COURT_W, COURT_L),
+    new THREE.MeshStandardMaterial({
+      map: makeCourtTexture(), roughness: 0.55, metalness: 0.04, envMapIntensity: 0.7,
+    }),
   );
-  arena.position.y = 3;
-  scene.add(arena);
+  court.rotation.x = -Math.PI / 2;
+  court.position.y = 0.004;            // just clear of the floor, no z-fighting
+  court.receiveShadow = true;
+  scene.add(court);
+
+  // Perimeter barrier boards. These do most of the work of making the space
+  // read as a venue, and they give the table's glossy top something with
+  // structure to reflect instead of flat darkness.
+  const boardH = 0.60, boardT = 0.05;
+  const boardGeo = new THREE.BoxGeometry(1, boardH, boardT);
+  const sideBoard = new THREE.MeshStandardMaterial({
+    map: makeBoardTexture('FLYPONG'), roughness: 0.5, metalness: 0.1, envMapIntensity: 0.6,
+  });
+  const endBoard = new THREE.MeshStandardMaterial({
+    map: makeBoardTexture('MALECNS'), roughness: 0.5, metalness: 0.1, envMapIntensity: 0.6,
+  });
+  function addBoard(x, z, len, rotY, mat) {
+    const b = new THREE.Mesh(boardGeo, mat);
+    b.scale.x = len;
+    b.position.set(x, boardH / 2, z);
+    b.rotation.y = rotY;
+    b.castShadow = true; b.receiveShadow = true;
+    scene.add(b);
+  }
+  addBoard(-COURT_W / 2, 0, COURT_L, Math.PI / 2, sideBoard);
+  addBoard( COURT_W / 2, 0, COURT_L, Math.PI / 2, sideBoard);
+  addBoard(0, -COURT_L / 2, COURT_W, 0, endBoard);
+  addBoard(0,  COURT_L / 2, COURT_W, 0, endBoard);
+
+  // Tiered seating with a crowd, instanced so several hundred spectators cost
+  // one draw call. Kept dim and low-contrast: it should register as a full
+  // arena in peripheral vision without competing with the ball.
+  const tiers = 5;
+  const perTier = 46;
+  const crowdGeo = new THREE.CapsuleGeometry(0.16, 0.26, 3, 6);
+  const crowd = new THREE.InstancedMesh(
+    crowdGeo,
+    new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 }),
+    tiers * perTier * 2,
+  );
+  const stand = new THREE.Object3D();
+  const palette = [0x3b2f57, 0x4a3a63, 0x2e3f5e, 0x53406b, 0x35506b, 0x604a72];
+  const col = new THREE.Color();
+  let ci = 0;
+  for (const dir of [-1, 1]) {
+    for (let t = 0; t < tiers; t++) {
+      const x = dir * (COURT_W / 2 + 1.3 + t * 0.85);
+      const y = 0.45 + t * 0.42;
+      for (let i = 0; i < perTier; i++) {
+        const z = -COURT_L / 2 - 1 + (i / (perTier - 1)) * (COURT_L + 2);
+        stand.position.set(x + (Math.random() - 0.5) * 0.18, y, z + (Math.random() - 0.5) * 0.12);
+        stand.rotation.set(0, dir > 0 ? -Math.PI / 2 : Math.PI / 2, 0);
+        stand.scale.setScalar(0.9 + Math.random() * 0.25);
+        stand.updateMatrix();
+        crowd.setMatrixAt(ci, stand.matrix);
+        col.setHex(palette[(Math.random() * palette.length) | 0]);
+        crowd.setColorAt(ci, col);
+        ci++;
+      }
+    }
+  }
+  crowd.instanceMatrix.needsUpdate = true;
+  scene.add(crowd);
+
+  // The stands themselves, as simple risers under the crowd.
+  const riserMat = new THREE.MeshStandardMaterial({
+    color: 0x191330, roughness: 0.9, emissive: 0x181240, emissiveIntensity: 0.35,
+  });
+  for (const dir of [-1, 1]) {
+    for (let t = 0; t < tiers; t++) {
+      const riser = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.42 * (t + 1), COURT_L + 2), riserMat);
+      riser.position.set(dir * (COURT_W / 2 + 1.3 + t * 0.85), 0.21 * (t + 1), 0);
+      riser.receiveShadow = true;
+      scene.add(riser);
+    }
+  }
+
+  // Far walls, to close the box off behind the stands.
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: 0x1d1738, roughness: 1,
+    emissive: 0x241c4e, emissiveIntensity: 0.55,
+  });
+  const hall = new THREE.Mesh(new THREE.BoxGeometry(26, 11, 34), wallMat);
+  hall.material.side = THREE.BackSide;
+  hall.position.y = 5.5 - 0.01;
+  scene.add(hall);
+
+  // An LED ribbon running along the back of both stands. The upper third of
+  // the frame was still solid black because the spotlights only carry 9m and
+  // nothing else reached the walls -- emissive geometry is the cheap fix, and
+  // it gives the arena a horizon line instead of a void.
+  const ribbonMat = new THREE.MeshBasicMaterial({ color: 0x7b5bd6 });
+  for (const dir of [-1, 1]) {
+    const ribbon = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.20, COURT_L + 2), ribbonMat);
+    ribbon.position.set(dir * (COURT_W / 2 + 1.3 + tiers * 0.85), 2.45, 0);
+    scene.add(ribbon);
+  }
+
+  // Big screen at the far end: a focal point down the table, and the main
+  // source of light on the back wall.
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(4.4, 2.2),
+    new THREE.MeshBasicMaterial({ map: makeScreenTexture() }),
+  );
+  screen.position.set(0, 2.05, -13.6);
+  scene.add(screen);
+
+  const screenGlow = new THREE.RectAreaLight(0x6f8dff, 4.0, 4.4, 2.2);
+  screenGlow.position.set(0, 2.05, -13.5);
+  screenGlow.lookAt(0, 1.5, 0);
+  scene.add(screenGlow);
+
+  const screenFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(4.7, 2.5, 0.14),
+    new THREE.MeshStandardMaterial({ color: 0x0d0a18, roughness: 0.8 }),
+  );
+  screenFrame.position.set(0, 2.05, -13.75);
+  scene.add(screenFrame);
+
+  // A dim uplight on the back wall so it reads as a surface, not a black gap.
+  const wallWash = new THREE.PointLight(0x5a4d9c, 40, 26, 2);
+  wallWash.position.set(0, 4.5, -9);
+  scene.add(wallWash);
 
   /* ---- lights ---- */
-  scene.add(new THREE.HemisphereLight(0x8a7fc0, 0x0a0814, 0.55));
+  scene.add(new THREE.HemisphereLight(0x6f66a8, 0x140f22, 0.38));
 
-  const key = new THREE.DirectionalLight(0xfff4e2, 2.1);
+  const key = new THREE.DirectionalLight(0xfff4e2, 1.15);
   key.position.set(1.6, 4.2, 1.4);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -241,16 +465,66 @@ export function createScene(canvas) {
   key.shadow.radius = 3;
   scene.add(key);
 
-  const rim = new THREE.DirectionalLight(0x8f7bff, 0.8);
+  const rim = new THREE.DirectionalLight(0x8f7bff, 0.55);
   rim.position.set(-2.5, 2.0, -3);
   scene.add(rim);
 
+  // Overhead rig: visible housings with emissive panels, plus real spotlights
+  // aimed at the table. Bloom picks the panels up, which is what sells the
+  // "lit arena" look -- the old version had bare emissive strips floating with
+  // no fixture around them and cast no light of their own.
   const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xfff3dd });
-  for (const z of [-1.0, 0, 1.0]) {
-    const fx = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.16), fixtureMat);
-    fx.position.set(0, 2.9, z * HALF_LENGTH);
-    scene.add(fx);
+  const housingMat = new THREE.MeshStandardMaterial({ color: 0x1a1726, roughness: 0.5, metalness: 0.7 });
+  for (const z of [-1.15, 0, 1.15]) {
+    const rig = new THREE.Group();
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.18, 0.44), housingMat);
+    rig.add(housing);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.03, 0.3), fixtureMat);
+    panel.position.y = -0.1;
+    rig.add(panel);
+    rig.position.set(0, 3.0, z * HALF_LENGTH);
+    scene.add(rig);
+
+    const spot = new THREE.SpotLight(0xfff6e8, 7.5, 9, 0.7, 0.6, 1.6);
+    spot.position.set(0, 2.95, z * HALF_LENGTH);
+    spot.target.position.set(0, TABLE.height, z * HALF_LENGTH);
+    scene.add(spot, spot.target);
   }
+
+  // Truss the rig hangs from, so the lights are attached to something.
+  const trussMat = new THREE.MeshStandardMaterial({ color: 0x241f38, roughness: 0.6, metalness: 0.6 });
+  for (const x of [-1.5, 1.5]) {
+    const truss = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, COURT_L), trussMat);
+    truss.position.set(x, 3.25, 0);
+    scene.add(truss);
+  }
+
+  // Ceiling. Without this the upper half of the frame was pure black with a
+  // hard horizon line across it -- the hall had walls but no lid, so the eye
+  // read it as an open void again.
+  const ceiling = new THREE.Mesh(
+    new THREE.PlaneGeometry(26, 34),
+    new THREE.MeshStandardMaterial({
+      color: 0x171230, roughness: 0.95,
+      emissive: 0x1d1740, emissiveIntensity: 0.5,
+    }),
+  );
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.y = 7.2;
+  scene.add(ceiling);
+
+  // Roof girders, so the ceiling has depth rather than being a flat lid.
+  for (let i = -4; i <= 4; i++) {
+    const girder = new THREE.Mesh(new THREE.BoxGeometry(24, 0.16, 0.16), trussMat);
+    girder.position.set(0, 6.95, i * 3.2);
+    scene.add(girder);
+  }
+
+  // A soft fill from behind the camera. The near paddle faces away from every
+  // other source, so it was rendering as a black silhouette in the foreground.
+  const fill = new THREE.DirectionalLight(0xbfd0ff, 0.5);
+  fill.position.set(0.4, 1.6, 4.5);
+  scene.add(fill);
 
   /* ---- ball ---- */
   const ball = new THREE.Mesh(
@@ -276,45 +550,118 @@ export function createScene(canvas) {
     trail.push(t);
   }
 
-  /* ---- paddles ---- */
+  /* ---- paddles ----
+   *
+   * The old bat was a flat 40-sided cylinder on a plain cone, which read as a
+   * lollipop: a hard-rimmed disc, no neck joining it to the handle, and a
+   * handle that was round in section instead of flat. This builds the real
+   * thing -- a slightly oval blade with a bevelled edge, a tapered neck, and a
+   * flattened flared handle with an end knob.
+   */
+
+  /** Rubber sheet: matte with a very fine tooth, so it isn't a plastic disc. */
+  function makeRubberTexture(hex) {
+    const s = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const g = c.getContext('2d');
+    g.fillStyle = hex;
+    g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 6000; i++) {
+      g.fillStyle = `rgba(0,0,0,${Math.random() * 0.07})`;
+      g.fillRect(Math.random() * s, Math.random() * s, 1.5, 1.5);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  // Blade outline: 157mm x 150mm, very slightly taller than wide, with a neck
+  // flowing down into the handle rather than a disc stuck on a stick.
+  function bladeShape(rx, ry) {
+    const sh = new THREE.Shape();
+    const steps = 64;
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * Math.PI * 2 - Math.PI / 2;
+      // pinch the bottom inward to form the shoulders of the neck
+      const pinch = 1 - 0.34 * Math.max(0, -Math.sin(a)) ** 2.2;
+      const x = Math.cos(a) * rx * pinch;
+      const y = Math.sin(a) * ry;
+      if (i === 0) sh.moveTo(x, y); else sh.lineTo(x, y);
+    }
+    return sh;
+  }
+
   function makePaddle(rubberColor) {
     const g = new THREE.Group();
     const blade = new THREE.Group();
-    const wood = new THREE.MeshStandardMaterial({ color: 0x8a5f33, roughness: 0.55, envMapIntensity: 0.5 });
-    const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.0825, 0.0825, 0.007, 40), wood);
-    edge.rotation.x = Math.PI / 2;
-    edge.castShadow = true;
-    blade.add(edge);
 
-    const rubber = (color, z) => {
+    const woodMat = new THREE.MeshStandardMaterial({
+      color: 0xc08e56, roughness: 0.5, envMapIntensity: 0.5,
+    });
+    const core = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(bladeShape(0.0785, 0.075), {
+        depth: 0.006, bevelEnabled: true, bevelThickness: 0.0016,
+        bevelSize: 0.0016, bevelSegments: 3, curveSegments: 24,
+      }),
+      woodMat,
+    );
+    core.position.z = -0.003;
+    core.castShadow = true;
+    blade.add(core);
+
+    const rubber = (color, z, flip) => {
       const m = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.079, 0.079, 0.0035, 40),
-        new THREE.MeshPhysicalMaterial({ color, roughness: 0.75, sheen: 0.4, sheenRoughness: 0.6, envMapIntensity: 0.35 }),
+        new THREE.ExtrudeGeometry(bladeShape(0.0755, 0.0722), {
+          depth: 0.0019, bevelEnabled: true, bevelThickness: 0.0006,
+          bevelSize: 0.0009, bevelSegments: 2, curveSegments: 24,
+        }),
+        new THREE.MeshPhysicalMaterial({
+          map: makeRubberTexture(color),
+          roughness: 0.82, sheen: 0.35, sheenRoughness: 0.7, envMapIntensity: 0.25,
+        }),
       );
-      m.rotation.x = Math.PI / 2;
       m.position.z = z;
+      m.scale.z = flip ? -1 : 1;
       m.castShadow = true;
       return m;
     };
-    blade.add(rubber(rubberColor, 0.0052));
-    blade.add(rubber(0x101014, -0.0052));
-    blade.position.y = 0.075;
+    blade.add(rubber(rubberColor, 0.0032, false));
+    blade.add(rubber('#131318', -0.0032, true));
+
+    blade.position.y = 0.073;
     g.add(blade);
 
-    const handle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.0155, 0.021, 0.1, 16),
-      new THREE.MeshStandardMaterial({ color: 0x6b4526, roughness: 0.7 }),
-    );
-    handle.position.y = 0.005;
+    // Neck: bridges blade to handle so there is no floating gap at the joint.
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.0165, 0.032, 14), woodMat);
+    neck.scale.x = 0.62;
+    neck.position.y = 0.019;
+    neck.castShadow = true;
+    g.add(neck);
+
+    // Handle: flattened in section (scale.x) and flared toward the end, which
+    // is what makes it read as a bat grip rather than a broom handle.
+    const gripMat = new THREE.MeshStandardMaterial({ color: 0x53331c, roughness: 0.68 });
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.0168, 0.0208, 0.082, 20), gripMat);
+    handle.scale.x = 0.60;
+    handle.position.y = -0.031;
     handle.castShadow = true;
     g.add(handle);
+
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.021, 16, 12), gripMat);
+    knob.scale.set(0.60, 0.42, 1);
+    knob.position.y = -0.071;
+    knob.castShadow = true;
+    g.add(knob);
 
     g.userData.blade = blade;
     return g;
   }
 
-  const playerPaddle = makePaddle(0xd2332c);
-  const oppPaddle = makePaddle(0xd2332c);
+  // Which face points at the camera is decided per frame by animatePaddle,
+  // which sets rotation.y from the paddle's facing, so it is not set here.
+  const playerPaddle = makePaddle('#c8322b');
+  const oppPaddle = makePaddle('#c8322b');
   scene.add(playerPaddle, oppPaddle);
 
   /* ---- contact shadows (cheap soft AO under the ball and paddles) ---- */
@@ -378,7 +725,7 @@ export function createScene(canvas) {
   /* ---- post-processing ---- */
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.34, 0.75, 0.85);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.8, 0.92);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
