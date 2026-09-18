@@ -82,6 +82,7 @@ const G = {
   timer: 0,
   round: 0,
   wonTour: false,
+  endless: false,        // auto-restart on match end, for unattended runs
   match: R.makeMatch(),
   banner: '',
   lastReason: '',
@@ -412,13 +413,33 @@ function concludePoint(result) {
   brain.clearPending();
 
   if (result.matchWon) {
-    if (result.point === R.PLAYER) {
+    // Captured before the round advances: the history has to say which
+    // opponent was actually beaten, not which one comes next.
+    const playedRound = G.round;
+    const playerWon = result.point === R.PLAYER;
+
+    if (playerWon) {
       G.round += 1;
       if (G.round >= TOUR.length) { G.wonTour = true; G.round = TOUR.length - 1; }
     }
+    recordMatch(playerWon, G.match.games.player, G.match.games.opponent, playedRound);
+
     G.phase = 'matchOver';
-    G.timer = 2.6;
-    showTitle(result.point === R.PLAYER
+    G.timer = G.endless ? 1.4 : 2.6;
+
+    // In endless mode the title screen never comes up: the match result is
+    // shown as a banner and the next one starts on its own. Weights live on
+    // the server and are not reset between matches, so an unattended run is
+    // one continuous training session rather than a series of fresh starts.
+    if (G.endless) {
+      G.banner = playerWon
+        ? (G.wonTour ? 'TOUR COMPLETE — restarting' : `MATCH WON — next: ${TOUR[G.round].name}`)
+        : `MATCH LOST ${G.match.games.player}-${G.match.games.opponent} — retrying ${TOUR[G.round].name}`;
+      updateHud();
+      return;
+    }
+
+    showTitle(playerWon
       ? (G.wonTour ? 'World Tour champion — every country beaten.'
                    : `Match won ${G.match.games.player}-${G.match.games.opponent}. Next: ${TOUR[G.round].flag} ${TOUR[G.round].name}.`)
       : `Lost the match ${G.match.games.player}-${G.match.games.opponent}. Try again?`);
@@ -498,6 +519,40 @@ function animatePaddle(group, pad, facing, dt) {
   group.position.y += phase * 0.045;
 }
 
+/* ------------------------------ endless mode -------------------------------- */
+
+/**
+ * Running totals for an unattended session. Worth keeping separately from the
+ * match state: the interesting question in endless mode is not "who won this
+ * match" but whether the fly is getting better across dozens of them, and the
+ * per-match history is what shows that.
+ */
+const session = { matches: 0, won: 0, pointsFor: 0, pointsAgainst: 0, history: [], startedAt: 0 };
+
+function recordMatch(playerWon, gamesFor, gamesAgainst, playedRound) {
+  session.matches += 1;
+  if (playerWon) session.won += 1;
+  session.pointsFor += gamesFor;
+  session.pointsAgainst += gamesAgainst;
+  session.history.push({
+    round: playedRound, opponent: TOUR[playedRound].name,
+    won: playerWon, gamesFor, gamesAgainst,
+    t: (performance.now() - session.startedAt) / 1000,
+  });
+  // Bounded: an overnight run would otherwise grow this without limit.
+  if (session.history.length > 500) session.history.shift();
+}
+
+function setEndless(on) {
+  G.endless = !!on;
+  if (G.endless && session.startedAt === 0) session.startedAt = performance.now();
+  $('endlessbtn').textContent = G.endless ? '∞ ENDLESS' : '∞ OFF';
+  $('endlessbtn').classList.toggle('active', G.endless);
+  $('sessionhud').style.display = G.endless ? 'block' : 'none';
+  // Turning it on from the title screen should actually start playing.
+  if (G.endless && G.phase === 'title') startMatch();
+}
+
 /* --------------------------------- lifecycle -------------------------------- */
 
 function startMatch() {
@@ -519,6 +574,7 @@ $('flybtn').addEventListener('click', () => {
   brain.fly.failures = 0;
   syncFlyButton();
 });
+$('endlessbtn').addEventListener('click', () => setEndless(!G.endless));
 function syncFlyButton() {
   $('flybtn').textContent = brain.fly.enabled ? '🪰 ON' : '🪰 OFF';
   $('flybtn').classList.toggle('active', brain.fly.enabled);
@@ -533,6 +589,18 @@ setInterval(() => {
       `LC10→DNa10 steering ${brain.fly.x >= 0 ? '→' : '←'}${Math.abs(brain.fly.x).toFixed(2)} · `
       + `MB chose ${brain.fly.stroke}/${brain.fly.placement} `
       + `(ctx ${brain.fly.ctx ?? '–'}, value ${v >= 0 ? '+' : ''}${v.toFixed(3)})`;
+  }
+  if (G.endless) {
+    const mins = session.startedAt ? (performance.now() - session.startedAt) / 60000 : 0;
+    // Recent form is the number that matters: lifetime average hides whether
+    // it is still improving, which is the whole point of a long run.
+    const recent = session.history.slice(-10);
+    const recentWon = recent.filter((m) => m.won).length;
+    $('sessionhud').textContent =
+      `endless · ${session.matches} matches, ${session.won} won `
+      + `· games ${session.pointsFor}-${session.pointsAgainst} `
+      + `· last 10: ${recentWon}/${recent.length || 0} `
+      + `· round ${G.round + 1} · ${mins.toFixed(0)}m`;
   }
   syncFlyButton();
 }, 40);
@@ -575,7 +643,11 @@ function tick(dt) {
       else if (G.phase === 'pointPause') { G.banner = ''; G.phase = 'serveWait'; G.timer = 0.6; }
       else if (G.phase === 'gamePause') {
         R.startNextGame(G.match); G.banner = ''; G.phase = 'serveWait'; G.timer = 0.9; updateHud();
-      } else if (G.phase === 'matchOver') { G.phase = 'title'; }
+      } else if (G.phase === 'matchOver') {
+        // Endless: straight into the next match instead of the title screen.
+        if (G.endless) { G.banner = ''; startMatch(); }
+        else G.phase = 'title';
+      }
     }
   }
 
@@ -708,4 +780,5 @@ window.FLYPONG = {
   startMatch, beginRally, predictArrival, buildShot, tick, FIXED, setInput,
   setPlayerSpeed: (v) => { PLAYER_SPEED = v; },
   getPlayerSpeed: () => PLAYER_SPEED,
+  setEndless, session,
 };

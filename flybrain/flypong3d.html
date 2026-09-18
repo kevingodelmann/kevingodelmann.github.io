@@ -27,8 +27,15 @@
     border-radius:10px;background:var(--panel);border:1px solid var(--line);color:var(--text);
     font:inherit;font-size:13px;cursor:pointer}
   #flybtn.active{background:var(--acc);border-color:var(--acc);color:#0a0712}
+  #endlessbtn{pointer-events:auto;position:absolute;right:108px;bottom:12px;height:38px;padding:0 12px;
+    border-radius:10px;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font:inherit;font-size:13px;cursor:pointer}
+  #endlessbtn.active{background:var(--good);border-color:var(--good);color:#0a0712}
   #flyhud{position:absolute;right:12px;bottom:58px;display:none;white-space:nowrap;
     font-size:10px;color:var(--dim);background:rgba(21,16,42,.72);
+    border:1px solid var(--line);border-radius:6px;padding:5px 9px}
+  #sessionhud{position:absolute;left:12px;bottom:42px;display:none;white-space:nowrap;
+    font-size:10px;color:var(--good);background:rgba(21,16,42,.78);
     border:1px solid var(--line);border-radius:6px;padding:5px 9px}
   #title{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
     justify-content:center;gap:12px;text-align:center;padding:24px;
@@ -58,7 +65,9 @@
   <div id="telemetry"></div>
 </div>
 <button id="flybtn">🪰 OFF</button>
+<button id="endlessbtn">∞ OFF</button>
 <div id="flyhud"></div>
+<div id="sessionhud"></div>
 <div id="loading">Loading…</div>
 <div id="title">
   <h1>🏓 FLYPONG WORLD TOUR 3D</h1>
@@ -70,7 +79,8 @@
   <div id="opponents"></div>
   <div id="trophy">🏆</div>
   <button id="serve">SERVE</button>
-  <div id="hint">🪰 hands the paddle to the fly connectome</div>
+  <div id="hint">🪰 hands the paddle to the fly connectome ·
+    ∞ keeps replaying so it can train unattended</div>
 </div>
 
 <script type="importmap">
