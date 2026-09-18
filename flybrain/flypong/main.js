@@ -38,16 +38,25 @@ const $ = (id) => document.getElementById(id);
  * bot still lost every game to it — so the ladder now actually starts easy.
  */
 const TOUR = [
-  { flag: '🇯🇵', name: 'Japan',   speed: 1.75, reach: 1.2, err: 0.160, lead: 0.15 },
-  { flag: '🇧🇷', name: 'Brazil',  speed: 1.95, reach: 1.6, err: 0.135, lead: 0.28 },
-  { flag: '🇫🇷', name: 'France',  speed: 2.10, reach: 1.8, err: 0.125, lead: 0.36 },
-  { flag: '🇩🇪', name: 'Germany', speed: 2.35, reach: 2.5, err: 0.085, lead: 0.56 },
-  { flag: '🇰🇷', name: 'S.Korea', speed: 2.60, reach: 3.1, err: 0.060, lead: 0.72 },
-  { flag: '🇨🇳', name: 'China',   speed: 2.90, reach: 3.8, err: 0.040, lead: 0.90 },
+  { flag: '🇯🇵', name: 'Japan',   speed: 1.70, reach: 1.0, err: 0.185, lead: 0.12 },
+  { flag: '🇧🇷', name: 'Brazil',  speed: 1.85, reach: 1.3, err: 0.165, lead: 0.20 },
+  { flag: '🇫🇷', name: 'France',  speed: 2.00, reach: 1.6, err: 0.145, lead: 0.30 },
+  { flag: '🇩🇪', name: 'Germany', speed: 2.15, reach: 2.0, err: 0.120, lead: 0.42 },
+  { flag: '🇰🇷', name: 'S.Korea', speed: 2.32, reach: 2.4, err: 0.095, lead: 0.55 },
+  { flag: '🇨🇳', name: 'China',   speed: 2.50, reach: 2.9, err: 0.070, lead: 0.68 },
 ];
 
 /** Lateral paddle speed for the human/connectome side. */
-const PLAYER_SPEED = 2.6;
+/**
+ * How fast the player's paddle can track sideways, in m/s.
+ *
+ * This is the single most difficulty-sensitive constant in the game. A shot
+ * crosses the table in roughly half a second, so covering the full 1.5m width
+ * demands ~3 m/s; anything below that makes the widest placements physically
+ * unreturnable no matter how well the ball is read. Tuning the opponent
+ * ratings barely moves the win rate compared to moving this.
+ */
+let PLAYER_SPEED = 3.3;
 
 /**
  * How far outside the table a paddle can reach. Table tennis has no sideline
@@ -631,4 +640,6 @@ requestAnimationFrame(frame);
 window.FLYPONG = {
   G, ball, PH, R, TOUR, brain, view,
   startMatch, beginRally, predictArrival, buildShot, tick, FIXED, setInput,
+  setPlayerSpeed: (v) => { PLAYER_SPEED = v; },
+  getPlayerSpeed: () => PLAYER_SPEED,
 };
