@@ -305,7 +305,11 @@ recover <- function() {
 }
 
 last_decision <- NULL
-last_choice <- list(stroke = "drive", placement = "centre", ctx = 0, value = 0)
+last_choice <- list(stroke = "drive", placement = "centre", ctx = 0, action = 0,
+                    value = 0, approach = 1, avoid = 1)
+# Counter + kind of the most recent dopamine event, so a client can detect a
+# new one by change rather than by polling a log.
+last_dopamine <- list(n = 0, kind = "none", strength = 0)
 hits <- matrix(0L, N_CONTEXT, N_ACTIONS)
 rewards <- matrix(0L, N_CONTEXT, N_ACTIONS)
 
@@ -357,6 +361,8 @@ reinforce <- function(won, strength = 1) {
     mb_app$W[kc_sets_app[[cell]], ] <<- mb_app$W[kc_sets_app[[cell]], ] * (1 - eta)
   }
   hits[ctx, act] <<- hits[ctx, act] + 1L
+  last_dopamine <<- list(n = last_dopamine$n + 1, kind = if (won) "reward" else "punish",
+                         strength = strength)
   recover()
   after <- action_value(ctx, act)
   log_event(if (won) "reward" else "punish", ctx, act, before, after)
@@ -475,8 +481,14 @@ httpd_app <- list(call = function(req) {
     last_decision <<- list(ctx = ctx, action = sel$action)
     # Surfaced through /brain_state so the dashboard can show what the
     # mushroom body just chose, and how strongly it preferred it.
+    # The two MBON channels are reported separately, not just their difference:
+    # the whole point of the rule is that reward and punishment act on
+    # DIFFERENT channels, which a single signed number hides.
+    ch <- cell_id(ctx, sel$action)
     last_choice <<- list(stroke = sel$stroke, placement = sel$placement,
-                         ctx = ctx, value = sel$values[sel$action])
+                         ctx = ctx, action = sel$action,
+                         value = sel$values[sel$action],
+                         approach = approach_drive(ch), avoid = avoid_drive(ch))
     return(json_ok(list(x = mv$x, y = mv$y, ctx = ctx, action = sel$action,
                         stroke = sel$stroke, placement = sel$placement,
                         values = sel$values, probs = sel$probs,
@@ -502,7 +514,7 @@ httpd_app <- list(call = function(req) {
     plasticity_on <<- num(params, "on", "1") > 0.5
     return(json_ok(list(plasticity = plasticity_on), headers))
   }
-  if (path == "/brain_state")  return(json_ok(c(last_state, list(choice = last_choice)), headers))
+  if (path == "/brain_state")  return(json_ok(c(last_state, list(choice = last_choice, dopamine = last_dopamine)), headers))
   if (path == "/calibration")  return(json_ok(list(
       turn_peak_app = cal_app$turn, turn_peak_esc = cal_esc$turn,
       scale_turn_app = scale_turn_app, scale_turn_esc = scale_turn_esc,

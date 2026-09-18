@@ -34,6 +34,26 @@
   .binbars .bar span{position:absolute;bottom:-14px;left:0;right:0;text-align:center;font-size:8px;color:var(--dim)}
   #status{font-size:11px;color:var(--dim)}
   #status.live{color:var(--good)}
+  #eyes{margin:6px 0 4px}
+  .eyerow{display:flex;align-items:center;gap:6px;margin:3px 0}
+  .eyelab{font-size:9px;color:var(--dim);width:58px;text-align:right}
+  .eyetrack{flex:1;height:7px;background:#0e0a1c;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  .eyefill{height:100%;width:0;transition:width .12s linear;border-radius:3px}
+  .eyefill.l{background:linear-gradient(90deg,#2b7f52,#5fe08a)}
+  .eyefill.r{background:linear-gradient(90deg,#2b5f8f,#59d2ff)}
+  .turnbar{position:relative;height:14px;margin:5px 0 1px}
+  .turnmid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line)}
+  .turnpin{position:absolute;top:1px;width:3px;height:12px;border-radius:2px;
+    background:var(--acc);box-shadow:0 0 6px var(--acc);transition:left .12s linear}
+  .eyecap{font-size:9px;color:var(--dim);text-align:center}
+  .mbrow{display:flex;align-items:center;gap:6px;margin:4px 0}
+  .mblab{font-size:9px;color:var(--dim);width:104px;text-align:right}
+  .mbtrack{flex:1;height:9px;background:#0e0a1c;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .mbfill{height:100%;width:0;transition:width .2s linear;border-radius:4px}
+  .mbfill.app{background:linear-gradient(90deg,#2b7f52,#5fe08a)}
+  .mbfill.avo{background:linear-gradient(90deg,#8f2b45,#ff4d6d)}
+  #dop-flash{height:13px;font-size:10px;text-align:center;opacity:0;
+    transition:opacity .25s;margin-top:5px;font-weight:700}
   #note{font-size:10px;color:var(--dim);line-height:1.4}
 </style>
 </head>
@@ -44,6 +64,14 @@
     <div class="panel">
       <h2>Connectome activity <span id="status">connecting…</span></h2>
       <svg id="circuit" viewBox="0 0 480 320"></svg>
+      <div id="eyes">
+        <div class="eyerow"><span class="eyelab">left eye</span>
+          <div class="eyetrack"><div class="eyefill l" id="eye-l"></div></div></div>
+        <div class="eyerow"><span class="eyelab">right eye</span>
+          <div class="eyetrack"><div class="eyefill r" id="eye-r"></div></div></div>
+        <div class="turnbar"><div class="turnmid"></div><div class="turnpin" id="eye-turn"></div></div>
+        <div class="eyecap">steering = right drive &minus; left drive</div>
+      </div>
       <div id="note">Flypong only drives the pursuit circuit (LC10 → DNa10 →
       motor neurons, green) for ball-tracking. The escape circuit (red) stays
       dim — there's no threat concept in table tennis, so it's real but idle.</div>
@@ -55,6 +83,17 @@
         <div class="stat"><div class="v" id="s-turn">–</div><div class="l">paddle steer (L/R)</div></div>
         <div class="stat"><div class="v" id="s-app-hits">0</div><div class="l">points learned from</div></div>
       </div>
+    </div>
+    <div class="panel">
+      <h2>Mushroom body channels</h2>
+      <div class="mbrow"><span class="mblab">approach (MBON01)</span>
+        <div class="mbtrack"><div class="mbfill app" id="mb-approach"></div></div></div>
+      <div class="mbrow"><span class="mblab">avoid (MBON11)</span>
+        <div class="mbtrack"><div class="mbfill avo" id="mb-avoid"></div></div></div>
+      <div id="dop-flash">&nbsp;</div>
+      <div id="note">Dopamine only ever <b>weakens</b> a synapse. Reward depresses
+      the avoidance channel and punishment depresses the approach channel, so
+      both directions of learning come from one real, one-signed rule.</div>
     </div>
     <div class="panel">
       <h2>Learning progress over time</h2>
@@ -73,56 +112,149 @@
 const FLY_HOST = location.hostname === 'localhost' ? '127.0.0.1' : location.hostname;
 const FLY_SERVER = `http://${FLY_HOST}:8723`;
 
-// ---------------- anatomical circuit diagram (same real layout as Nightfall's dashboard) ----------------
+// ---------------- anatomical circuit diagram ----------------
+//
+// The previous version drew the neurons as a cloud of dots whose opacity
+// tracked activity. That showed WHERE things were but not that it is a
+// circuit: no connections, no direction of flow, and no sign of the one
+// computation that actually produces steering -- the difference between the
+// two eyes. This draws the real edges from the connectome files, keyed by
+// bodyid to the same anatomical positions, and animates signal along them.
+
 const svg = document.getElementById('circuit');
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
 
 const GROUP_STYLE = {
-  lc_e:  { color: '#59d2ff', r: 1.6, baseOp: 0.15 },
-  dn_e:  { color: '#ff6b85', r: 3.2, baseOp: 0.2 },
-  in_e:  { color: '#9b91c4', r: 1.8, baseOp: 0.15 },
-  mn_e:  { color: '#ffcf5c', r: 1.6, baseOp: 0.15 },
-  mbon_e:{ color: '#ff6b85', r: 4.5, baseOp: 0.25 },
-  lc_a:  { color: '#5fe08a', r: 1.6, baseOp: 0.35 },
-  dn_a:  { color: '#a678ff', r: 3.2, baseOp: 0.55 },
-  in_a:  { color: '#9b91c4', r: 1.8, baseOp: 0.30 },
-  mn_a:  { color: '#ffcf5c', r: 1.6, baseOp: 0.30 },
-  mbon_a:{ color: '#5fe08a', r: 4.5, baseOp: 0.6 },
-  kc_e:  { color: '#ff9a6b', r: 1.4, baseOp: 0.15 },
-  kc_a:  { color: '#ff9a6b', r: 1.4, baseOp: 0.28 },
+  lc_e:  { color: '#4a6a8a', r: 1.5, baseOp: 0.10 },
+  dn_e:  { color: '#ff6b85', r: 3.0, baseOp: 0.16 },
+  in_e:  { color: '#6a6488', r: 1.6, baseOp: 0.10 },
+  mn_e:  { color: '#8a7c5a', r: 1.5, baseOp: 0.10 },
+  mbon_e:{ color: '#ff6b85', r: 5.0, baseOp: 0.30 },
+  lc_a:  { color: '#5fe08a', r: 1.7, baseOp: 0.30 },
+  dn_a:  { color: '#a678ff', r: 3.6, baseOp: 0.50 },
+  in_a:  { color: '#9b91c4', r: 1.8, baseOp: 0.28 },
+  mn_a:  { color: '#ffcf5c', r: 1.7, baseOp: 0.28 },
+  kc_e:  { color: '#ff9a6b', r: 1.5, baseOp: 0.16 },
+  kc_a:  { color: '#ff9a6b', r: 1.5, baseOp: 0.26 },
+  mbon_a:{ color: '#5fe08a', r: 5.0, baseOp: 0.55 },
 };
 
-let layout = null, nodeEls = {}, viewCenterX = 230;
+let layout = null, nodeEls = {}, byId = {}, viewCenterX = 230;
+const edgeGroups = { lc_dn: [], dn_in: [], in_mn: [], kc_mbon: [] };
+
+/** Glow + a soft vignette, so the panel reads as a brain rather than a plot. */
+function addDefs(w, h){
+  const defs = el('defs', {});
+  defs.innerHTML =
+    '<filter id="glow" x="-60%" y="-60%" width="220%" height="220%">' +
+    '<feGaussianBlur stdDeviation="2.4" result="b"/>' +
+    '<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+    '<radialGradient id="vig" cx="50%" cy="42%" r="70%">' +
+    '<stop offset="0%" stop-color="#241a44" stop-opacity="0.9"/>' +
+    '<stop offset="100%" stop-color="#0a0712" stop-opacity="1"/></radialGradient>';
+  svg.appendChild(defs);
+  svg.appendChild(el('rect', { x: 0, y: 0, width: w, height: h, fill: 'url(#vig)' }));
+}
+
+/** neuprint JSON arrives either as row objects or as parallel columns. */
+function asRows(E){
+  if (Array.isArray(E)) return E;
+  return E.from.map((f, i) => ({
+    from: f, to: E.to[i], weight: E.weight[i], layer: E.layer ? E.layer[i] : null,
+  }));
+}
+
+/**
+ * Draw edges for one layer. Only the strongest `cap` are kept: the full edge
+ * list turns the panel into a grey smear, and the weak tail contributes almost
+ * nothing to the computation anyway.
+ */
+function drawEdges(rows, cap, color, width){
+  const list = rows
+    .map(e => ({ a: byId[e.from], b: byId[e.to], w: e.weight }))
+    .filter(e => e.a && e.b)
+    .sort((x, y) => y.w - x.w)
+    .slice(0, cap);
+  if (!list.length) return [];
+  const maxW = Math.max.apply(null, list.map(e => e.w)) || 1;
+  const out = [];
+  for (const e of list){
+    // gentle arc, so parallel edges separate instead of overdrawing
+    const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2;
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const cx = mx - dy * 0.14, cy = my + dx * 0.14;
+    const path = el('path', {
+      d: 'M' + e.a.x + ',' + e.a.y + ' Q' + cx + ',' + cy + ' ' + e.b.x + ',' + e.b.y,
+      fill: 'none', stroke: color,
+      'stroke-width': width * (0.4 + 0.6 * (e.w / maxW)),
+      'stroke-linecap': 'round',
+    });
+    path.style.opacity = 0.05 + 0.20 * (e.w / maxW);
+    svg.appendChild(path);
+    out.push({ el: path, w: e.w / maxW });
+  }
+  return out;
+}
+
 async function loadLayout(){
-  const r = await fetch('brain_layout.json');
-  layout = await r.json();
-  svg.setAttribute('viewBox', `0 0 ${layout.viewport.w} ${layout.viewport.h}`);
+  layout = await (await fetch('brain_layout.json')).json();
+  const W = layout.viewport.w, H = layout.viewport.h;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  addDefs(W, H);
+  viewCenterX = W / 2;
 
-  const pts = layout.outline.map(p => `${p.x},${p.y}`).join(' ');
-  svg.appendChild(el('polygon', { points: pts, class: 'brain-outline' }));
-  viewCenterX = layout.viewport.w / 2;
+  svg.appendChild(el('polygon', {
+    points: layout.outline.map(p => p.x + ',' + p.y).join(' '), class: 'brain-outline',
+  }));
 
+  // midline: the left/right axis is the whole basis of the steering signal
+  svg.appendChild(el('line', {
+    x1: viewCenterX, y1: 6, x2: viewCenterX, y2: H - 42,
+    stroke: 'rgba(166,120,255,0.18)', 'stroke-dasharray': '3 5', 'stroke-width': 1,
+  }));
+
+  for (const g in GROUP_STYLE)
+    (layout.groups[g] || []).forEach(pt => { byId[pt.bodyid] = pt; });
+
+  // ---- real connectome edges, drawn under the somata ----
+  try {
+    const circ = await (await fetch('circuit_appetitive_rf.json')).json();
+    const rows = asRows(circ.edges);
+    const of = (layer) => rows.filter(r => r.layer === layer);
+    edgeGroups.lc_dn = drawEdges(of('lc_to_dn'), 240, '#5fe08a', 0.9);
+    edgeGroups.dn_in = drawEdges(of('dn_to_in'), 120, '#a678ff', 1.2);
+    edgeGroups.in_mn = drawEdges(of('in_to_mn'), 140, '#ffcf5c', 0.9);
+  } catch(e){ /* edges are enrichment; the diagram still works without them */ }
+
+  try {
+    const mb = await (await fetch('mb_circuit_appetitive.json')).json();
+    edgeGroups.kc_mbon = drawEdges(asRows(mb.edges), 90, '#ff9a6b', 0.8);
+  } catch(e){}
+
+  // ---- somata on top ----
   for (const g in GROUP_STYLE){
     const style = GROUP_STYLE[g];
     nodeEls[g] = [];
     (layout.groups[g] || []).forEach(pt => {
       const c = el('circle', { cx: pt.x, cy: pt.y, r: style.r, class: 'node', fill: style.color });
       c.style.opacity = style.baseOp;
+      if (style.r >= 3) c.setAttribute('filter', 'url(#glow)');
       svg.appendChild(c);
       nodeEls[g].push({ el: c, pt, style });
     });
   }
+
   const legend = [
-    ['LC10 (pursuit, active)', '#5fe08a'], ['DN pursuit (DNa10)', '#a678ff'],
-    ['MBON01 drive', '#5fe08a'], ['VNC interneuron/motor', '#9b91c4'],
-    ['Kenyon cells', '#ff9a6b'], ['Escape circuit (unused here)', '#ff6b85'],
+    ['LC10 visual (pursuit)', '#5fe08a'], ['DNa10 descending', '#a678ff'],
+    ['VNC interneuron', '#9b91c4'], ['motor neuron', '#ffcf5c'],
+    ['Kenyon cells', '#ff9a6b'], ['escape circuit (idle here)', '#ff6b85'],
   ];
   legend.forEach((row, i) => {
-    const col = i % 2, rowi = Math.floor(i/2);
-    const lx = 8 + col*225, ly = layout.viewport.h - 34 + rowi*10;
+    const col = i % 2, rowi = Math.floor(i / 2);
+    const lx = 8 + col * 225, ly = H - 32 + rowi * 10;
     svg.appendChild(el('circle', { cx: lx, cy: ly, r: 2.5, class: 'legend-dot', fill: row[1] }));
-    const t = el('text', { x: lx+6, y: ly+3, class: 'legend' }); t.textContent = row[0];
+    const t = el('text', { x: lx + 6, y: ly + 3, class: 'legend' }); t.textContent = row[0];
     svg.appendChild(t);
   });
 }
@@ -131,53 +263,125 @@ function setGroupActivity(g, v){
   const k = Math.max(0, Math.min(1, v));
   (nodeEls[g] || []).forEach(n => {
     n.el.style.opacity = n.style.baseOp + k * (1 - n.style.baseOp);
-    n.el.setAttribute('r', n.style.r * (1 + k*0.8));
+    n.el.setAttribute('r', n.style.r * (1 + k * 0.8));
   });
 }
 function setGroupActivityBySide(g, leftAmt, rightAmt){
   (nodeEls[g] || []).forEach(n => {
     const k = Math.max(0, Math.min(1, n.pt.x < viewCenterX ? leftAmt : rightAmt));
     n.el.style.opacity = n.style.baseOp + k * (1 - n.style.baseOp);
-    n.el.setAttribute('r', n.style.r * (1 + k*0.8));
+    n.el.setAttribute('r', n.style.r * (1 + k * 0.8));
   });
 }
 function setDnActivityByName(g, dict){
   (nodeEls[g] || []).forEach(n => {
     const k = Math.max(0, Math.min(1, (dict && dict[n.pt.name]) || 0));
     n.el.style.opacity = n.style.baseOp + k * (1 - n.style.baseOp);
-    n.el.setAttribute('r', n.style.r * (1 + k*1.2));
+    n.el.setAttribute('r', n.style.r * (1 + k * 1.2));
   });
+}
+
+// ---- signal flow -----------------------------------------------------------
+// Dashes running along the edges, so the pathway reads as a direction of travel
+// rather than a static web. Speed follows the live drive through that layer.
+let flow = 0;
+const flowRates = { lc_dn: 0, dn_in: 0, in_mn: 0, kc_mbon: 0 };
+function animateFlow(){
+  flow += 1;
+  for (const key in edgeGroups){
+    const rate = flowRates[key] || 0;
+    for (const e of edgeGroups[key]){
+      if (rate < 0.02){ e.el.style.strokeDasharray = 'none'; continue; }
+      e.el.style.strokeDasharray = '3 9';
+      e.el.style.strokeDashoffset = -(flow * (0.6 + rate * 2.6)) % 12;
+      e.el.style.opacity = 0.06 + 0.5 * rate * (0.4 + 0.6 * e.w);
+    }
+  }
+  requestAnimationFrame(animateFlow);
+}
+requestAnimationFrame(animateFlow);
+
+// ---- the interocular comparison --------------------------------------------
+// Steering IS the difference between the eyes, so it gets its own readout
+// instead of being implied by dot brightness.
+function setEyeBars(l, r, turn){
+  const bar = (id, v) => {
+    const e = document.getElementById(id);
+    if (e) e.style.width = (Math.max(0, Math.min(1, v)) * 100) + '%';
+  };
+  bar('eye-l', l); bar('eye-r', r);
+  const n = document.getElementById('eye-turn');
+  if (n) n.style.left = (50 + Math.max(-1, Math.min(1, turn)) * 48) + '%';
+}
+
+// ---- mushroom body channels ------------------------------------------------
+function setMbChannels(approach, avoid){
+  const a = document.getElementById('mb-approach'), v = document.getElementById('mb-avoid');
+  if (a) a.style.width = (Math.max(0, Math.min(1, approach)) * 100) + '%';
+  if (v) v.style.width = (Math.max(0, Math.min(1, avoid)) * 100) + '%';
+}
+let lastDopN = 0;
+function flashDopamine(kind){
+  const f = document.getElementById('dop-flash');
+  if (!f) return;
+  f.style.color = kind === 'reward' ? 'var(--good)' : 'var(--hp)';
+  f.textContent = kind === 'reward' ? 'PAM reward → depress avoidance channel'
+                                    : 'PPL1 punishment → depress approach channel';
+  f.style.opacity = '1';
+  clearTimeout(flashDopamine._t);
+  flashDopamine._t = setTimeout(() => { f.style.opacity = '0'; }, 1100);
 }
 
 // ---------------- polling ----------------
 async function pollBrain(){
   try {
-    const r = await fetch(`${FLY_SERVER}/brain_state`);
-    const j = await r.json();
-    document.getElementById('status').textContent = 'live'; document.getElementById('status').className = 'live';
+    const j = await (await fetch(FLY_SERVER + '/brain_state')).json();
+    document.getElementById('status').textContent = 'live';
+    document.getElementById('status').className = 'live';
     if (!layout) return;
 
-    const leftAmt_a = j.gx!==undefined ? Math.max(0, j.gx) * j.gurgency : 0;
-    const rightAmt_a = j.gx!==undefined ? Math.max(0, -j.gx) * j.gurgency : 0;
-    setGroupActivityBySide('lc_a', leftAmt_a, rightAmt_a);
+    // Each eye's drive. The circuit only ever sees the target through the two
+    // hemifields, and the turn is what falls out of their difference.
+    const gx = j.gx || 0, urg = (j.gurgency === undefined ? 1 : j.gurgency);
+    const rightAmt = Math.max(0, gx) * urg;
+    const leftAmt  = Math.max(0, -gx) * urg;
+    setGroupActivityBySide('lc_a', leftAmt, rightAmt);
     setDnActivityByName('dn_a', j.d_dn_app);
-    setGroupActivity('in_a', Math.min(1, Math.abs(j.app_turn||0)/2));
-    setGroupActivity('mn_a', Math.min(1, Math.abs(j.app_fwd||0)/2));
-    // v5: the MB no longer emits a scalar 'potentiation' gain -- it selects
-    // an action, so what we show is the valence of the choice it just made.
+
+    const drive = Math.min(1, Math.abs(j.app_turn || 0) / 6);
+    setGroupActivity('in_a', drive);
+    setGroupActivity('mn_a', Math.min(1, Math.abs(j.app_fwd || 0) / 2));
+    flowRates.lc_dn = Math.max(leftAmt, rightAmt);
+    flowRates.dn_in = drive;
+    flowRates.in_mn = drive;
+
+    setEyeBars(leftAmt, rightAmt, j.mx || 0);
+
     if (j.choice) lastPolicy = j.choice;
     const val = lastPolicy ? lastPolicy.value : 0;
-    setGroupActivity('mbon_a', Math.min(1, Math.abs(val)*3));
-    setGroupActivity('kc_a', Math.min(1, Math.abs(val)*3));
-    setGroupActivity('mbon_e', Math.min(1, Math.max(0, -val)*3));
+    const approach = (lastPolicy && lastPolicy.approach !== undefined) ? lastPolicy.approach : 1;
+    const avoid    = (lastPolicy && lastPolicy.avoid    !== undefined) ? lastPolicy.avoid    : 1;
+    setMbChannels(approach, avoid);
+    setGroupActivity('mbon_a', Math.min(1, approach));
+    setGroupActivity('mbon_e', Math.min(1, avoid));
+    setGroupActivity('kc_a', 0.3 + 0.4 * Math.min(1, Math.abs(val) * 3));
+    flowRates.kc_mbon = 0.25 + 0.6 * Math.min(1, Math.abs(val) * 3);
+
+    if (j.dopamine && j.dopamine.n > lastDopN){
+      lastDopN = j.dopamine.n;
+      flashDopamine(j.dopamine.kind);
+    }
 
     document.getElementById('s-potentiation').textContent =
-      lastPolicy ? `${lastPolicy.stroke}/${lastPolicy.placement} (${val>=0?'+':''}${val.toFixed(2)})` : '-';
-    document.getElementById('s-turn').textContent = (j.app_turn||0).toFixed(2);
+      lastPolicy ? lastPolicy.stroke + '/' + lastPolicy.placement
+                   + ' (' + (val >= 0 ? '+' : '') + val.toFixed(2) + ')' : '-';
+    document.getElementById('s-turn').textContent = (j.mx || 0).toFixed(2);
   } catch(e){
-    document.getElementById('status').textContent = 'offline'; document.getElementById('status').className = '';
+    document.getElementById('status').textContent = 'offline';
+    document.getElementById('status').className = '';
   }
 }
+
 loadLayout().then(() => setInterval(pollBrain, 150));
 
 // ---------------- learned policy ----------------
