@@ -23,7 +23,10 @@
   .brain-outline{fill:rgba(166,120,255,0.05);stroke:rgba(166,120,255,0.35);stroke-width:1.5}
   .legend{font-size:9px;fill:var(--dim)}
   .legend-dot{stroke:none}
-  #stats-row{display:flex;gap:8px}
+  /* Wraps rather than squeezing: a fourth tile pushed the row past the panel
+     width in the dashboard's half-width column and clipped the last one. */
+  #stats-row{display:flex;gap:8px;flex-wrap:wrap}
+  #stats-row .stat{min-width:104px}
   .stat{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
   .stat .v{font-size:20px;font-weight:700;color:var(--gold)}
   .stat .l{font-size:10px;color:var(--dim);margin-top:2px}
@@ -82,6 +85,7 @@
         <div class="stat"><div class="v" id="s-potentiation">–</div><div class="l">stroke the mushroom body chose (valence)</div></div>
         <div class="stat"><div class="v" id="s-turn">–</div><div class="l">paddle steer (L/R)</div></div>
         <div class="stat"><div class="v" id="s-app-hits">0</div><div class="l">points learned from</div></div>
+        <div class="stat"><div class="v" id="s-memory">-</div><div class="l">memory on disk</div></div>
       </div>
     </div>
     <div class="panel">
@@ -396,6 +400,12 @@ async function pollLog(){
     let trials = 0;
     for (let c = 0; c < j.n_context; c++) for (let a = 0; a < j.n_actions; a++) trials += j.hits[c][a];
     document.getElementById('s-app-hits').textContent = trials;
+    try {
+      const mem = await (await fetch(FLY_SERVER + '/memory')).json();
+      const n = document.getElementById('s-memory');
+      if (n) n.textContent = mem.exists ? (mem.trials_in_ram + '✓') : 'none';
+      if (n) n.title = mem.exists ? ('saved ' + mem.modified + ' to ' + mem.path) : 'nothing saved yet';
+    } catch(e){}
     drawPolicy(j);
   } catch(e){}
 }

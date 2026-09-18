@@ -242,12 +242,16 @@ cell_id <- function(ctx, act) (ctx - 1) * N_ACTIONS + act
 # Sparse random KC subsets. Random PN->KC connectivity is the one genuinely
 # principled abstraction here: the fly's KC odour/context code really is a
 # random sparse expansion, not something the connectome dictates per stimulus.
-make_kc_sets <- function(n_kc, n_sets, seed, active_frac = 0.05) {
+ACTIVE_FRAC <- 0.05
+SEED_APP <- 5000
+SEED_ESC <- 1000
+
+make_kc_sets <- function(n_kc, n_sets, seed, active_frac = ACTIVE_FRAC) {
   n_active <- max(2, round(active_frac * n_kc))
   lapply(seq_len(n_sets), function(i) { set.seed(seed + i); sample(seq_len(n_kc), n_active) })
 }
-kc_sets_app <- make_kc_sets(length(mb_app$kc_ids), N_CELLS, 5000)
-kc_sets_esc <- make_kc_sets(length(mb_esc$kc_ids), N_CELLS, 1000)
+kc_sets_app <- make_kc_sets(length(mb_app$kc_ids), N_CELLS, SEED_APP)
+kc_sets_esc <- make_kc_sets(length(mb_esc$kc_ids), N_CELLS, SEED_ESC)
 
 # Each ensemble is normalised against ITS OWN untrained strength, so every
 # channel reads 1.0 before learning and decays toward 0 as it is depressed.
@@ -313,6 +317,66 @@ last_dopamine <- list(n = 0, kind = "none", strength = 0)
 hits <- matrix(0L, N_CONTEXT, N_ACTIONS)
 rewards <- matrix(0L, N_CONTEXT, N_ACTIONS)
 
+# ===========================================================================
+# PERSISTENT MEMORY
+# ===========================================================================
+#
+# Everything learned lived in RAM, so restarting the server threw away the
+# session -- which mattered once the game got an endless mode, because the
+# whole point of leaving it running is to accumulate the hundreds of trials
+# the policy needs across 9 contexts x 9 actions.
+#
+# What is saved is the learned state only: the KC->MBON weight matrices and
+# the trial counters. The circuits, the KC ensembles and the baselines are all
+# regenerated from the connectome files and the seeds at startup, so the file
+# stays small and can never silently disagree with the anatomy.
+
+MEMORY_PATH <- file.path(ROOT, "fly_memory.rds")
+SAVE_EVERY <- 25     # dopamine events between autosaves
+
+# A saved file is only meaningful if the ensembles it was trained against are
+# the same ones we would rebuild now. The KC subsets come from seeded RNG, so
+# changing the seed, the sparsity, the context/action grid or the KC population
+# silently re-points every ensemble at different cells -- the weights would
+# load without error and mean something entirely different. This signature
+# makes that mismatch a refusal instead of a subtle corruption.
+memory_signature <- function() {
+  list(version = 5,
+       n_context = N_CONTEXT, n_actions = N_ACTIONS,
+       active_frac = ACTIVE_FRAC, seed_app = SEED_APP, seed_esc = SEED_ESC,
+       kc_app = rownames(mb_app$W_init), kc_esc = rownames(mb_esc$W_init),
+       mbon_app = colnames(mb_app$W_init), mbon_esc = colnames(mb_esc$W_init))
+}
+
+save_memory <- function() {
+  ok <- tryCatch({
+    saveRDS(list(signature = memory_signature(),
+                 W_app = mb_app$W, W_esc = mb_esc$W,
+                 hits = hits, rewards = rewards,
+                 dopamine_n = last_dopamine$n,
+                 saved_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+            MEMORY_PATH)
+    TRUE
+  }, error = function(e) { cat("memory save failed:", conditionMessage(e), "\n"); FALSE })
+  ok
+}
+
+load_memory <- function() {
+  if (!file.exists(MEMORY_PATH)) return(list(loaded = FALSE, reason = "no saved memory"))
+  m <- tryCatch(readRDS(MEMORY_PATH), error = function(e) NULL)
+  if (is.null(m)) return(list(loaded = FALSE, reason = "unreadable file"))
+  if (!identical(m$signature, memory_signature()))
+    return(list(loaded = FALSE, reason = "signature mismatch -- ensembles differ, refusing to load"))
+  if (!identical(dim(m$W_app), dim(mb_app$W)) || !identical(dim(m$W_esc), dim(mb_esc$W)))
+    return(list(loaded = FALSE, reason = "weight dimensions differ"))
+  mb_app$W <<- m$W_app
+  mb_esc$W <<- m$W_esc
+  hits <<- m$hits
+  rewards <<- m$rewards
+  last_dopamine <<- list(n = m$dopamine_n %||% 0, kind = "restored", strength = 0)
+  list(loaded = TRUE, saved_at = m$saved_at, trials = sum(m$hits))
+}
+
 # Frozen-weights control. The point of an A/B here is that it is now capable of
 # telling us something: in v4 a frozen control was indistinguishable from the
 # learning condition BY CONSTRUCTION, because learning multiplied a saturated
@@ -325,6 +389,10 @@ reset_memory <- function() {
   hits <<- matrix(0L, N_CONTEXT, N_ACTIONS)
   rewards <<- matrix(0L, N_CONTEXT, N_ACTIONS)
   last_decision <<- NULL
+  # The saved file is overwritten too, so a reset survives a restart. Otherwise
+  # clearing the memory and restarting would quietly resurrect the old weights,
+  # which would be a very confusing way to lose an A/B control.
+  save_memory()
 }
 
 # `strength` scales the depression, so the same synapse can be taught by two
@@ -364,6 +432,11 @@ reinforce <- function(won, strength = 1) {
   last_dopamine <<- list(n = last_dopamine$n + 1, kind = if (won) "reward" else "punish",
                          strength = strength)
   recover()
+  # Autosave on a counter rather than every event: an overnight endless run
+  # fires several dopamine events a second, and writing the file each time
+  # would be pure I/O for no benefit. At 25 a crash costs a few seconds of
+  # learning, not the session.
+  if (last_dopamine$n %% SAVE_EVERY == 0) save_memory()
   after <- action_value(ctx, act)
   log_event(if (won) "reward" else "punish", ctx, act, before, after)
   list(ctx = ctx, action = act, stroke = ACTIONS$stroke[act],
@@ -510,6 +583,18 @@ httpd_app <- list(call = function(req) {
   }
 
   if (path == "/reset") { reset_memory(); return(json_ok(list(ok = TRUE), headers)) }
+
+  if (path == "/save") return(json_ok(list(ok = save_memory(), path = MEMORY_PATH), headers))
+  if (path == "/load") return(json_ok(load_memory(), headers))
+  if (path == "/memory") {
+    ex <- file.exists(MEMORY_PATH)
+    return(json_ok(list(
+      path = MEMORY_PATH, exists = ex,
+      bytes = if (ex) as.numeric(file.info(MEMORY_PATH)$size) else 0,
+      modified = if (ex) format(file.info(MEMORY_PATH)$mtime, "%Y-%m-%d %H:%M:%S") else NA,
+      trials_in_ram = sum(hits), dopamine_events = last_dopamine$n,
+      autosave_every = SAVE_EVERY), headers))
+  }
   if (path == "/plasticity") {
     plasticity_on <<- num(params, "on", "1") > 0.5
     return(json_ok(list(plasticity = plasticity_on), headers))
@@ -527,4 +612,23 @@ cat("fly-brain bridge v5 on http://0.0.0.0:8723\n")
 cat("  graded retinal input:", nrow(app$lc_meta), "LC10 +", nrow(esc$lc_meta), "LC4/LC6 with real RFs\n")
 cat("  turn drive peak (pursuit):", round(cal_app$turn, 4), "-> scale", round(scale_turn_app, 2), "\n")
 cat("  MB policy:", N_CONTEXT, "contexts x", N_ACTIONS, "actions =", N_CELLS, "KC ensembles\n")
+
+# Pick up where the last session left off. A refusal here is deliberate and
+# loud: loading weights trained against different KC ensembles would not error,
+# it would just quietly mean something else.
+local({
+  r <- load_memory()
+  if (isTRUE(r$loaded)) {
+    cat("  memory: restored", r$trials, "trials from", r$saved_at, "\n")
+  } else {
+    cat("  memory: starting fresh (", r$reason, ")\n")
+  }
+})
+
+# Deliberately no exit hook. runServer() blocks until the process is killed,
+# and neither on.exit() nor .Last runs when a process is terminated, so an exit
+# handler here would be a promise that never fires. Durability comes from the
+# autosave every SAVE_EVERY events, plus /save for an explicit flush before a
+# planned restart.
+
 runServer("0.0.0.0", 8723, httpd_app)
