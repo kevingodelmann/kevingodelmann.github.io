@@ -51,7 +51,7 @@
     <div class="panel">
       <h2>Current decision</h2>
       <div id="stats-row">
-        <div class="stat"><div class="v" id="s-potentiation">–</div><div class="l">pursuit drive (↑ on winning a point)</div></div>
+        <div class="stat"><div class="v" id="s-potentiation">–</div><div class="l">stroke the mushroom body chose (valence)</div></div>
         <div class="stat"><div class="v" id="s-turn">–</div><div class="l">paddle steer (L/R)</div></div>
         <div class="stat"><div class="v" id="s-app-hits">0</div><div class="l">points learned from</div></div>
       </div>
@@ -67,7 +67,11 @@
   </div>
 </div>
 <script>
-const FLY_SERVER = `http://${location.hostname}:8721`;
+// v5 server. 127.0.0.1 rather than localhost: localhost resolves to ::1
+// first, httpuv binds IPv4 only, and every request then eats a ~2s
+// connection-fallback timeout (measured 2.05s vs 0.006s).
+const FLY_HOST = location.hostname === 'localhost' ? '127.0.0.1' : location.hostname;
+const FLY_SERVER = `http://${FLY_HOST}:8723`;
 
 // ---------------- anatomical circuit diagram (same real layout as Nightfall's dashboard) ----------------
 const svg = document.getElementById('circuit');
@@ -159,13 +163,16 @@ async function pollBrain(){
     setDnActivityByName('dn_a', j.d_dn_app);
     setGroupActivity('in_a', Math.min(1, Math.abs(j.app_turn||0)/2));
     setGroupActivity('mn_a', Math.min(1, Math.abs(j.app_fwd||0)/2));
-    setGroupActivity('mbon_a', Math.min(1, (j.potentiation||0)*2));
-    setGroupActivity('kc_a', Math.min(1, (j.potentiation||0)*2));
+    // v5: the MB no longer emits a scalar 'potentiation' gain -- it selects
+    // an action, so what we show is the valence of the choice it just made.
+    if (j.choice) lastPolicy = j.choice;
+    const val = lastPolicy ? lastPolicy.value : 0;
+    setGroupActivity('mbon_a', Math.min(1, Math.abs(val)*3));
+    setGroupActivity('kc_a', Math.min(1, Math.abs(val)*3));
+    setGroupActivity('mbon_e', Math.min(1, Math.max(0, -val)*3));
 
-    // escape circuit stays real but essentially idle in this game
-    setGroupActivity('mbon_e', j.suppression||0);
-
-    document.getElementById('s-potentiation').textContent = ((j.potentiation||0)*100).toFixed(0)+'%';
+    document.getElementById('s-potentiation').textContent =
+      lastPolicy ? `${lastPolicy.stroke}/${lastPolicy.placement} (${val>=0?'+':''}${val.toFixed(2)})` : '-';
     document.getElementById('s-turn').textContent = (j.app_turn||0).toFixed(2);
   } catch(e){
     document.getElementById('status').textContent = 'offline'; document.getElementById('status').className = '';
@@ -173,40 +180,45 @@ async function pollBrain(){
 }
 loadLayout().then(() => setInterval(pollBrain, 150));
 
-// ---------------- learning chart (reward events only — this game has no aversive/damage signal) ----------------
+// ---------------- learned policy ----------------
+// v5 exposes the policy itself rather than a stream of weight events: for every
+// (context, action) cell we can read the MBON valence that decides the choice.
+let lastPolicy = null;
 const ctx = document.getElementById('chart').getContext('2d');
 async function pollLog(){
   try {
-    const r = await fetch(`${FLY_SERVER}/learning_log`);
-    const rows = await r.json();
-    document.getElementById('s-app-hits').textContent = rows.filter(r=>r.kind==='reward').length;
-    drawChart(rows);
+    const r = await fetch(`${FLY_SERVER}/policy`);
+    const j = await r.json();
+    let trials = 0;
+    for (let c = 0; c < j.n_context; c++) for (let a = 0; a < j.n_actions; a++) trials += j.hits[c][a];
+    document.getElementById('s-app-hits').textContent = trials;
+    drawPolicy(j);
   } catch(e){}
 }
-function drawChart(rows){
+function drawPolicy(j){
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.clearRect(0,0,W,H);
-  ctx.strokeStyle = '#332a5c'; ctx.lineWidth = 1;
-  for (let i=0;i<=4;i++){ const y = H - (i/4)*H; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-  const sub = rows.filter(r => r.kind === 'reward');
-  if (!sub.length) return;
-  const maxT = Math.max(1, sub[sub.length-1].t);
-  ctx.strokeStyle = '#5fe08a'; ctx.lineWidth = 2; ctx.beginPath();
-  sub.forEach((row, i) => {
-    const x = (row.t / maxT) * W, y = H - Math.min(1, row.value_after*2) * H;
-    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-  });
-  ctx.stroke();
-  ctx.fillStyle = '#5fe08a';
-  sub.forEach(row => {
-    const x = (row.t / maxT) * W, y = H - Math.min(1, row.value_after*2) * H;
-    ctx.beginPath(); ctx.arc(x,y,2.5,0,7); ctx.fill();
-  });
+  const nC = j.n_context, nA = j.n_actions;
+  const cw = W / nA, ch = H / nC;
+  // one tile per (context, action): green = approach, red = learned avoidance
+  for (let c = 0; c < nC; c++) for (let a = 0; a < nA; a++) {
+    const v = j.values[c][a];
+    const k = Math.max(-1, Math.min(1, v * 3));
+    ctx.fillStyle = k >= 0 ? `rgba(95,224,138,${0.12 + k*0.8})`
+                           : `rgba(255,96,120,${0.12 - k*0.8})`;
+    ctx.fillRect(a*cw, c*ch, cw-1, ch-1);
+    if (j.hits[c][a] > 0) {
+      ctx.strokeStyle = 'rgba(232,227,255,.28)';
+      ctx.strokeRect(a*cw+0.5, c*ch+0.5, cw-2, ch-2);
+    }
+  }
 }
 setInterval(pollLog, 800);
 
 // ---------------- per-bin pursuit memory bars ----------------
-const binNames = ['0°L','0°H','45°L','45°H','90°L','90°H','135°L','135°H','180°L','180°H','225°L','225°H','270°L','270°H','315°L','315°H','idle'];
+// v5 contexts: ball lateral position x arrival height (3x3). The old 17
+// angular bins are gone -- half of them were structurally unreachable.
+const binNames = ['L/low','L/mid','L/high','C/low','C/mid','C/high','R/low','R/mid','R/high'];
 function makeBars(el){
   binNames.forEach((n,i) => {
     const b = document.createElement('div');
@@ -220,9 +232,12 @@ function makeBars(el){
 const barsApp = document.getElementById('binbars-app'); makeBars(barsApp);
 async function pollStats(){
   try {
-    const r = await fetch(`${FLY_SERVER}/learning_stats`);
+    const r = await fetch(`${FLY_SERVER}/policy`);
     const j = await r.json();
-    j.potentiation_fraction_app.forEach((frac, i) => { barsApp.children[i].style.height = Math.max(2, Math.min(1,frac/3)*60) + 'px'; });
+    // height = how often this context has been experienced
+    const tot = j.hits.map(row => row.reduce((x,y)=>x+y,0));
+    const mx = Math.max(1, ...tot);
+    tot.forEach((n, i) => { if (barsApp.children[i]) barsApp.children[i].style.height = Math.max(2, (n/mx)*60) + 'px'; });
   } catch(e){}
 }
 setInterval(pollStats, 800);
