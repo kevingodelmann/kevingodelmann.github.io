@@ -560,6 +560,8 @@ function tick(dt) {
   // Effects advance on the simulation clock, so they expire correctly whether
   // or not a frame is being drawn.
   view.updateSparks(dt);
+  // The fly only shows up when the connectome is actually flying the paddle.
+  view.updateFly(dt, brain.fly.enabled);
   if (G.phase === 'title') return;
 
   // Advance on expiry rather than only from inside a `timer > 0` branch: a

@@ -664,6 +664,142 @@ export function createScene(canvas) {
   const oppPaddle = makePaddle('#c8322b');
   scene.add(playerPaddle, oppPaddle);
 
+  /* ---- the pilot ----
+   *
+   * When the connectome takes the paddle, the fly it belongs to shows up and
+   * rides the bat. It is parented to the paddle group, so it inherits the
+   * swing and the lateral tracking for free.
+   *
+   * Scale is a deliberate lie: Drosophila melanogaster is about 2.5mm long,
+   * which at table scale is roughly one pixel. This one is ~30mm so you can
+   * actually see it. Everything else about the geometry -- the red compound
+   * eyes covering most of the head, the banded abdomen, two wings rather than
+   * four, six legs off the thorax -- is the right shape for the animal.
+   */
+  function makeFly() {
+    const f = new THREE.Group();
+
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x6b5a2e, roughness: 0.45, metalness: 0.25, envMapIntensity: 0.7,
+    });
+    const darkMat = new THREE.MeshStandardMaterial({
+      color: 0x241c10, roughness: 0.5, metalness: 0.2,
+    });
+    // Compound eyes are the giveaway: huge, and a deep unmistakable red.
+    const eyeMat = new THREE.MeshPhysicalMaterial({
+      color: 0xc2231b, roughness: 0.28, clearcoat: 0.9, clearcoatRoughness: 0.2,
+      emissive: 0x3a0704, emissiveIntensity: 0.6,
+    });
+    const wingMat = new THREE.MeshPhysicalMaterial({
+      color: 0xdfe6f5, transparent: true, opacity: 0.30, roughness: 0.15,
+      transmission: 0.6, side: THREE.DoubleSide, depthWrite: false,
+    });
+
+    // abdomen: tapered and banded
+    const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.0062, 16, 12), bodyMat);
+    abdomen.scale.set(1, 0.92, 2.0);
+    abdomen.position.z = -0.0088;
+    f.add(abdomen);
+    for (let i = 0; i < 3; i++) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.0055 - i * 0.0007, 0.0011, 6, 14), darkMat);
+      band.rotation.y = Math.PI / 2;
+      band.position.z = -0.0055 - i * 0.0042;
+      band.scale.set(1, 0.92, 1);
+      f.add(band);
+    }
+
+    const thorax = new THREE.Mesh(new THREE.SphereGeometry(0.0058, 16, 12), bodyMat);
+    thorax.scale.set(1, 0.95, 1.25);
+    f.add(thorax);
+
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.0044, 14, 10), bodyMat);
+    head.position.z = 0.0082;
+    f.add(head);
+    for (const sx of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.0033, 14, 10), eyeMat);
+      eye.position.set(sx * 0.0029, 0.0006, 0.0085);
+      eye.scale.set(0.85, 1.05, 0.95);
+      f.add(eye);
+    }
+
+    // six legs, three a side, angled back the way a resting fly holds them
+    const legMat = darkMat;
+    const legs = [];
+    for (const sx of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.00035, 0.00022, 0.0105, 5), legMat);
+        leg.position.set(sx * 0.0042, -0.0042, 0.003 - i * 0.0045);
+        leg.rotation.z = sx * 0.85;
+        leg.rotation.x = 0.35 - i * 0.3;
+        f.add(leg);
+        legs.push(leg);
+      }
+    }
+
+    // wings: flat ellipses hinged at the thorax
+    const wingShape = new THREE.Shape();
+    for (let i = 0; i <= 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      const x = Math.cos(a) * 0.0125 + 0.0125;
+      const y = Math.sin(a) * 0.0042 * (0.6 + 0.4 * (1 - i / 28));
+      if (i === 0) wingShape.moveTo(x, y); else wingShape.lineTo(x, y);
+    }
+    const wingGeo = new THREE.ShapeGeometry(wingShape, 16);
+    const wings = [];
+    for (const sx of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(sx * 0.0022, 0.0042, -0.002);
+      const w = new THREE.Mesh(wingGeo, wingMat);
+      w.rotation.y = Math.PI / 2;
+      w.rotation.x = sx > 0 ? 0 : Math.PI;
+      w.position.z = sx * 0.001;
+      pivot.add(w);
+      pivot.rotation.z = sx * 0.25;
+      pivot.userData.side = sx;
+      f.add(pivot);
+      wings.push(pivot);
+    }
+
+    f.userData.wings = wings;
+    f.visible = false;
+    return f;
+  }
+
+  const flyPilot = makeFly();
+  // Perched on the upper shoulder of the blade, just off the rubber, parented
+  // to the paddle so it rides every swing.
+  //
+  // 1.8x on top of the already-exaggerated geometry: at true relative size it
+  // came out about 17px on screen, which is a speck rather than a joke.
+  const FLY_PERCH_Y = 0.133;
+  flyPilot.scale.setScalar(1.8);
+  flyPilot.position.set(0.046, FLY_PERCH_Y, 0.012);
+  flyPilot.rotation.set(-1.05, 0.35, 0.18);
+  playerPaddle.add(flyPilot);
+
+  /**
+   * Wing-beat and idle fidget. Real Drosophila beat at ~200Hz, which at 60fps
+   * would alias into a stutter, so this runs at a readable rate and leans on
+   * blur from the low opacity instead.
+   */
+  let flyClock = 0;
+  function updateFly(dt, active) {
+    if (flyPilot.visible !== !!active) {
+      flyPilot.visible = !!active;
+      flyClock = 0;
+    }
+    if (!active) return;
+    flyClock += dt;
+    const beat = Math.sin(flyClock * 46) * 0.85;
+    for (const w of flyPilot.userData.wings) {
+      w.rotation.z = w.userData.side * (0.25 + 0.55) + beat * w.userData.side * 0.6;
+      w.rotation.x = beat * 0.25;
+    }
+    // small body bob and a twitch, so it reads as alive rather than a decal
+    flyPilot.position.y = FLY_PERCH_Y + Math.sin(flyClock * 3.1) * 0.0016;
+    flyPilot.rotation.y = 0.35 + Math.sin(flyClock * 0.7) * 0.10;
+  }
+
   /* ---- contact shadows (cheap soft AO under the ball and paddles) ---- */
   const blobCanvas = document.createElement('canvas');
   blobCanvas.width = blobCanvas.height = 128;
@@ -740,6 +876,7 @@ export function createScene(canvas) {
   return {
     renderer, scene, camera, composer, resize,
     ball, trail, ballBlob, playerPaddle, oppPaddle,
+    flyPilot, updateFly,
     spark, updateSparks,
     render: () => composer.render(),
   };
